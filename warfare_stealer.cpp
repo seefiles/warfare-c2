@@ -41,7 +41,7 @@
 using namespace std;
 
 // ==========================================
-// SIMPLIFIED WORKING JSON CLASS
+// SIMPLIFIED WORKING JSON CLASS - FIXED WITH CONST
 // ==========================================
 class json {
 private:
@@ -61,7 +61,7 @@ public:
         isArray = true;
     }
     
-    string dump() {
+    string dump() const {
         if (isArray) {
             string result = "[";
             for (size_t i = 0; i < arrayValues.size(); i++) {
@@ -73,7 +73,7 @@ public:
         } else {
             string result = "{";
             bool first = true;
-            for (auto& pair : keyValues) {
+            for (const auto& pair : keyValues) {
                 if (!first) result += ",";
                 result += "\"" + pair.first + "\":\"" + escape(pair.second) + "\"";
                 first = false;
@@ -83,7 +83,7 @@ public:
         }
     }
     
-    string escape(string s) {
+    string escape(string s) const {
         string result;
         for (char c : s) {
             if (c == '"') result += "\\\"";
