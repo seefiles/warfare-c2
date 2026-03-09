@@ -22,6 +22,7 @@
 #include <random>
 #include <iomanip>
 #include <regex>
+#include <map>
 
 #pragma comment(lib, "urlmon.lib")
 #pragma comment(lib, "wininet.lib")
