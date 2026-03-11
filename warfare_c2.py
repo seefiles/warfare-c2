@@ -206,7 +206,7 @@ init_db()
 # ==========================================
 # AUTHENTICATION FOR ADMIN
 # ==========================================
-ADMIN_USER = "warfare"
+ADMIN_USER = "cm"
 ADMIN_PASS = "doomsday2026"
 
 def authenticate(f):
